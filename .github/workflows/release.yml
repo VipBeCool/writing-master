@@ -7,7 +7,37 @@ on:
   workflow_dispatch:
 
 jobs:
-  release:
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Create Draft Release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `作文大师 ${tag}`,
+              body: `## 🌟 作文大师 ${tag} 正式发布\n\n全能智能辅导写作导师桌面客户端。\n\n### ✨ 本次更新重点：\n- 🎯 **AI 专属动态修改灵感**：结合当前文章、体裁与修改历史动态推荐，支持一键“换一批”\n- 📊 **客观字数差值展示**：告别生硬判断，清晰显示超出/缺少字数\n- 🎨 **全文两端对齐排版**：视觉整洁清爽\n- 🔄 **应用内原生无感自动升级**：点击更新自动完成下载重启\n- 🎙️ **本地极速语音识别转写支持**\n\n### 📦 安装包说明：\n- **Windows 电脑**：请下载并安装 \`.exe\` 或 \`.msi\` 安装包\n- **Mac 苹果电脑（M1/M2/M3/M4 系列）**：请下载 \`_aarch64.dmg\`\n- **Mac 苹果电脑（Intel 芯片）**：请下载 \`_x64.dmg\``,
+              draft: true,
+              prerelease: false
+            });
+            return data.id;
+
+  build-tauri:
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -15,9 +45,14 @@ jobs:
       matrix:
         include:
           - platform: 'macos-latest'
+            target: 'aarch64-apple-darwin'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            target: 'x86_64-apple-darwin'
             args: '--target x86_64-apple-darwin'
           - platform: 'windows-latest'
-            args: ''
+            target: 'x86_64-pc-windows-msvc'
+            args: '--target x86_64-pc-windows-msvc'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -32,20 +67,37 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri App
+      - name: Build and Package Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: '作文大师 ${{ github.ref_name }}'
-          releaseBody: '作文大师 AI 写作训练助手最新发布版本。'
-          releaseDraft: false
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
 
+  publish-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    needs: [create-release, build-tauri]
+    steps:
+      - name: Publish Release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: process.env.RELEASE_ID,
+              draft: false
+            });
