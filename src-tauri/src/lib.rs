@@ -83,42 +83,84 @@ impl ServiceManager {
 
         #[cfg(target_os = "windows")]
         {
-            let bin_candidates = [
-                PathBuf::from(r"C:\llama.cpp\llama-server.exe"),
-                PathBuf::from(r"C:\llama.cpp\build\bin\Release\llama-server.exe"),
-                PathBuf::from(r"C:\tools\llama.cpp\llama-server.exe"),
-                PathBuf::from(r"C:\models\llama-server.exe"),
-            ];
-            for b in bin_candidates {
-                if b.is_file() {
-                    binary = Some(b);
+            let mut search_dirs = Vec::new();
+
+            // 1. 优先读取用户自定义环境变量
+            if let Ok(custom) = std::env::var("LLAMA_DIR") {
+                search_dirs.push(PathBuf::from(custom));
+            }
+            if let Ok(userprofile) = std::env::var("USERPROFILE") {
+                let u_path = PathBuf::from(userprofile);
+                search_dirs.push(u_path.join("llama.cpp"));
+                search_dirs.push(u_path.join("models"));
+            }
+
+            // 2. 扫描常用盘符根目录 (C:, D:, E:)
+            for drive in ["C", "D", "E"] {
+                search_dirs.push(PathBuf::from(format!(r"{}:\llama.cpp", drive)));
+                search_dirs.push(PathBuf::from(format!(r"{}:\models", drive)));
+                search_dirs.push(PathBuf::from(format!(r"{}:\AI\llama.cpp", drive)));
+                search_dirs.push(PathBuf::from(format!(r"{}:\AI\models", drive)));
+                search_dirs.push(PathBuf::from(format!(r"{}:\tools\llama.cpp", drive)));
+            }
+
+            // 探测 llama-server.exe 二进制
+            for dir in &search_dirs {
+                let candidates = [
+                    dir.join("llama-server.exe"),
+                    dir.join(r"build\bin\Release\llama-server.exe"),
+                    dir.join(r"build\bin\llama-server.exe"),
+                ];
+                for c in candidates {
+                    if c.is_file() {
+                        binary = Some(c);
+                        work_dir = Some(dir.clone());
+                        break;
+                    }
+                }
+                if binary.is_some() {
                     break;
                 }
             }
 
-            let work_candidate = PathBuf::from(r"C:\llama.cpp");
-            if work_candidate.is_dir() {
-                work_dir = Some(work_candidate);
+            // 探测模型权重目录
+            if let Ok(custom_models) = std::env::var("MODELS_DIR") {
+                let cm = PathBuf::from(custom_models);
+                if cm.is_dir() {
+                    models_dir = Some(cm);
+                }
             }
-
-            let models_candidates = [
-                PathBuf::from(r"C:\models"),
-                PathBuf::from(r"C:\llama.cpp\models"),
-            ];
-            for m in models_candidates {
-                if m.is_dir() {
-                    models_dir = Some(m);
-                    break;
+            if models_dir.is_none() {
+                for dir in &search_dirs {
+                    let candidates = [
+                        dir.join("models"),
+                        dir.clone(),
+                    ];
+                    for c in candidates {
+                        if c.is_dir() && (c.join("models-preset.ini").is_file() || std::fs::read_dir(&c).map(|mut r| r.any(|e| e.map(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("gguf")).unwrap_or(false))).unwrap_or(false)) {
+                            models_dir = Some(c);
+                            break;
+                        }
+                    }
+                    if models_dir.is_some() {
+                        break;
+                    }
                 }
             }
 
-            let preset_candidates = [
-                PathBuf::from(r"C:\llama.cpp\models-preset.ini"),
-                PathBuf::from(r"C:\models\models-preset.ini"),
-            ];
-            for p in preset_candidates {
-                if p.is_file() {
-                    preset_file = Some(p);
+            // 探测 models-preset.ini 预设文件
+            for dir in &search_dirs {
+                let candidates = [
+                    dir.join("models-preset.ini"),
+                    dir.join(r"models\models-preset.ini"),
+                ];
+                for p in candidates {
+                    if p.is_file() {
+                        preset_file = Some(p);
+                        break;
+                    }
+                }
+                if preset_file.is_some() {
                     break;
                 }
             }
@@ -183,17 +225,34 @@ impl ServiceManager {
 
         #[cfg(target_os = "windows")]
         {
-            let script_path = PathBuf::from(r"C:\llama.cpp\scripts\asr-server.py");
-            if script_path.is_file() {
-                let mut cmd = Command::new("python");
-                cmd.arg(&script_path);
-                return Some(cmd);
+            let mut search_dirs = Vec::new();
+            if let Ok(custom) = std::env::var("LLAMA_DIR") {
+                search_dirs.push(PathBuf::from(custom));
             }
-            let bin_path = PathBuf::from(r"C:\llama.cpp\sensevoice-server.exe");
-            if bin_path.is_file() {
-                let mut cmd = Command::new(bin_path);
-                cmd.arg("--port").arg("8000");
-                return Some(cmd);
+            if let Ok(userprofile) = std::env::var("USERPROFILE") {
+                search_dirs.push(PathBuf::from(userprofile).join("llama.cpp"));
+            }
+            for drive in ["C", "D", "E"] {
+                search_dirs.push(PathBuf::from(format!(r"{}:\llama.cpp", drive)));
+                search_dirs.push(PathBuf::from(format!(r"{}:\AI\llama.cpp", drive)));
+                search_dirs.push(PathBuf::from(format!(r"{}:\tools\llama.cpp", drive)));
+            }
+
+            for dir in search_dirs {
+                let script = dir.join(r"scripts\asr-server.py");
+                if script.is_file() {
+                    let mut cmd = Command::new("python");
+                    cmd.arg(&script);
+                    cmd.current_dir(&dir);
+                    return Some(cmd);
+                }
+                let bin = dir.join("sensevoice-server.exe");
+                if bin.is_file() {
+                    let mut cmd = Command::new(bin);
+                    cmd.arg("--port").arg("8000");
+                    cmd.current_dir(&dir);
+                    return Some(cmd);
+                }
             }
         }
 
