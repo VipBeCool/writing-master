@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "TAURI_SIGNING_PRIVATE_KEY=\"$(cat src-tauri/tauri.key 2>/dev/null || echo '')\" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=\"\" tauri build"
   },
   "dependencies": {
     "@tauri-apps/plugin-process": "^2.4.0",
