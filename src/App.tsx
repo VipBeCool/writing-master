@@ -10,8 +10,10 @@ import { EssayCoach } from './components/EssayCoach';
 import { SampleStudio } from './components/SampleStudio';
 import { GoldenNotebook } from './components/GoldenNotebook';
 import { ParentZone } from './components/ParentZone';
+import { UpdateDialog } from './components/UpdateDialog';
 import { INITIAL_GOLDEN_SNIPPETS } from './services/mockData';
 import { checkLLMStatus, countChars } from './services/aiService';
+import { checkForAppUpdates, type UpdateInfo } from './services/updateService';
 import { useGradeProfile } from './services/libraryStore';
 import { DEFAULT_GRADE, defaultGenre, GRADE_ORDER, type GradeLevel } from './data/gradeProfiles';
 import type { TopicCard } from './data/topics';
@@ -43,6 +45,25 @@ export const App: React.FC = () => {
   // 访问过的页面保持挂载（只是隐藏），这样切换页面不会丢掉 AI 刚生成的结果
   const [visited, setVisited] = useState<Set<PageId>>(() => new Set<PageId>(['home']));
   const [parentOpen, setParentOpen] = useState(false);
+  const [parentTab, setParentTab] = useState<'model' | 'grade' | 'genre' | 'prompt' | 'data' | 'about'>('model');
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+
+  /* ── 启动 3 秒后静默检查更新 ── */
+  useEffect(() => {
+    const timer = window.setTimeout(async () => {
+      try {
+        const info = await checkForAppUpdates();
+        if (info.hasUpdate) {
+          setUpdateInfo(info);
+          setUpdateModalOpen(true);
+        }
+      } catch (e) {
+        console.debug('静默检查更新失败:', e);
+      }
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const [snippets, setSnippets] = useState<GoldenSnippet[]>(() => readJSON(SNIPPETS_KEY, INITIAL_GOLDEN_SNIPPETS));
   const [savedEssays, setSavedEssays] = useState<SavedEssay[]>(() => readJSON(ESSAYS_KEY, []));
@@ -240,7 +261,14 @@ export const App: React.FC = () => {
         onGradeChange={setGrade}
         snippetCount={snippets.length + savedEssays.length}
         llmStatus={llmStatus}
-        onOpenParentZone={() => setParentOpen(true)}
+        onOpenParentZone={() => {
+          setParentTab('model');
+          setParentOpen(true);
+        }}
+        onOpenAbout={() => {
+          setParentTab('about');
+          setParentOpen(true);
+        }}
       >
         {keepAlive(
           'home',
@@ -312,7 +340,20 @@ export const App: React.FC = () => {
         )}
       </AppShell>
 
-      <ParentZone open={parentOpen} onClose={() => setParentOpen(false)} currentGrade={grade} />
+      <ParentZone
+        open={parentOpen}
+        onClose={() => setParentOpen(false)}
+        currentGrade={grade}
+        initialTab={parentTab}
+      />
+
+      {updateInfo && (
+        <UpdateDialog
+          open={updateModalOpen}
+          onClose={() => setUpdateModalOpen(false)}
+          updateInfo={updateInfo}
+        />
+      )}
 
       {/* 轻提示 */}
       <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-24 z-50 flex justify-center px-4 lg:bottom-8">

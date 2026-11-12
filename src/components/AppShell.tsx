@@ -15,6 +15,7 @@ import { Mascot } from './Mascot';
 import { ACCENT, type Accent } from './ui';
 import { GRADE_GROUPS, type GradeLevel } from '../data/gradeProfiles';
 import { getGradeProfile, useLibraryVersion } from '../services/libraryStore';
+import { APP_VERSION } from '../services/updateService';
 
 export type PageId = 'home' | 'idea' | 'write' | 'coach' | 'learn' | 'notebook';
 export type LlmStatus = 'starting' | 'online' | 'offline';
@@ -48,6 +49,7 @@ interface AppShellProps {
   snippetCount: number;
   llmStatus: LlmStatus;
   onOpenParentZone: () => void;
+  onOpenAbout?: () => void;
   children: React.ReactNode;
 }
 
@@ -180,6 +182,7 @@ const Sidebar: React.FC<Omit<AppShellProps, 'children'>> = ({
   snippetCount,
   llmStatus,
   onOpenParentZone,
+  onOpenAbout,
 }) => {
   const flow = NAV.filter((n) => n.step);
   return (
@@ -224,8 +227,8 @@ const Sidebar: React.FC<Omit<AppShellProps, 'children'>> = ({
         </div>
       </nav>
 
-      {/* 底部：模型状态 + 家长区 */}
-      <div className="space-y-2">
+      {/* 底部：模型状态 + 家长区 + 版本与检查更新 */}
+      <div className="space-y-1.5 pt-1">
         <ModelStatus status={llmStatus} />
         <button
           type="button"
@@ -234,6 +237,17 @@ const Sidebar: React.FC<Omit<AppShellProps, 'children'>> = ({
         >
           <ShieldCheck className="size-5" aria-hidden="true" />
           家长区
+        </button>
+        <button
+          type="button"
+          onClick={onOpenAbout || onOpenParentZone}
+          className="group flex w-full items-center justify-between rounded-xl px-3 py-1.5 text-xs font-semibold text-ink-mute transition-colors hover:bg-canvas hover:text-brand-700"
+          title="点击查看关于与检查更新"
+        >
+          <span>小语作文 v{APP_VERSION}</span>
+          <span className="opacity-0 transition-opacity group-hover:opacity-100 text-[11px] font-bold text-brand-600">
+            检查更新 →
+          </span>
         </button>
       </div>
     </aside>

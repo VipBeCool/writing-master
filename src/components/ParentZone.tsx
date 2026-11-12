@@ -1,9 +1,33 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, FileUp, RotateCcw, Save, ShieldCheck, Wifi } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Cpu,
+  Download,
+  ExternalLink,
+  FileUp,
+  Laptop,
+  Mic,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  ShieldCheck,
+  Sparkles,
+  Wifi,
+} from 'lucide-react';
 import { Dialog } from './Dialog';
+import { Mascot } from './Mascot';
 import { Badge, Banner, Button, Card, Field, INPUT_CLASS, Segmented, Tabs } from './ui';
 import { loadConfig, saveConfig, type AppConfig } from '../services/configService';
 import { checkLLMStatus, listAvailableModels, type RemoteModelInfo } from '../services/aiService';
+import {
+  APP_VERSION,
+  checkForAppUpdates,
+  getClientPlatform,
+  GITHUB_REPO,
+  openExternalUrl,
+  type UpdateInfo,
+} from '../services/updateService';
 import {
   exportLibrary,
   getGenreGuide,
@@ -40,9 +64,11 @@ interface ParentZoneProps {
   onClose: () => void;
   /** 当前年级：打开家长区时默认选中它 */
   currentGrade: GradeLevel;
+  /** 默认打开的标签 */
+  initialTab?: TabId;
 }
 
-type TabId = 'model' | 'grade' | 'genre' | 'prompt' | 'data';
+type TabId = 'model' | 'grade' | 'genre' | 'prompt' | 'data' | 'about';
 
 const TEXTAREA = `${INPUT_CLASS} resize-y leading-relaxed text-base`;
 
@@ -737,10 +763,200 @@ const DataTab: React.FC = () => {
   );
 };
 
+/* ───────────────────────────── 关于与更新 ───────────────────────────── */
+
+const AboutTab: React.FC = () => {
+  const [checking, setChecking] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [hasChecked, setHasChecked] = useState(false);
+  const platform = getClientPlatform();
+
+  const handleCheck = async () => {
+    setChecking(true);
+    setError(null);
+    try {
+      const info = await checkForAppUpdates();
+      setUpdateInfo(info);
+      setHasChecked(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '检查更新失败，请稍后重试');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const primaryDownloadUrl =
+    platform === 'mac'
+      ? updateInfo?.macDownloadUrl || updateInfo?.htmlUrl
+      : updateInfo?.windowsDownloadUrl || updateInfo?.htmlUrl;
+
+  const primaryLabel =
+    platform === 'mac'
+      ? updateInfo?.macDownloadUrl
+        ? '下载 macOS 安装包 (.dmg)'
+        : '前往下载更新'
+      : updateInfo?.windowsDownloadUrl
+        ? '下载 Windows 安装包 (.exe)'
+        : '前往下载更新';
+
+  return (
+    <div className="space-y-6">
+      {/* 头部介绍卡片 */}
+      <div className="flex flex-col sm:flex-row items-center gap-5 rounded-3xl bg-canvas p-6 border border-line">
+        <Mascot mood="cheer" size={80} />
+        <div className="flex-1 text-center sm:text-left space-y-1.5">
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
+            <h3 className="text-xl font-extrabold text-ink tracking-tight">小语作文</h3>
+            <span className="rounded-full bg-brand-100 px-3 py-0.5 text-xs font-bold text-brand-800">
+              v{APP_VERSION}
+            </span>
+          </div>
+          <p className="text-sm text-ink-soft">
+            专为孩子打造的 AI 写作小伙伴 · 本地大模型驱动 · 100% 隐私安全
+          </p>
+          <div className="pt-2 flex flex-wrap items-center justify-center sm:justify-start gap-3">
+            <Button
+              icon={RefreshCw}
+              disabled={checking}
+              onClick={handleCheck}
+            >
+              {checking ? '正在检查最新版本…' : '检查新版本'}
+            </Button>
+            <Button
+              variant="ghost"
+              icon={ExternalLink}
+              onClick={() => openExternalUrl(`https://github.com/${GITHUB_REPO}`)}
+            >
+              GitHub 开源仓库
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* 检查结果反馈 */}
+      {error && (
+        <div className="flex items-start gap-3 rounded-2xl bg-coral-50 p-4 border border-coral-200 text-coral-800 text-sm">
+          <AlertCircle className="size-5 shrink-0 text-coral-600 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-bold">检查更新时遇到问题</p>
+            <p className="mt-0.5 text-xs text-coral-700">{error}</p>
+          </div>
+          <Button variant="ghost" onClick={handleCheck}>
+            重试
+          </Button>
+        </div>
+      )}
+
+      {hasChecked && updateInfo && (
+        <>
+          {updateInfo.hasUpdate ? (
+            <div className="rounded-3xl border-2 border-brand-300 bg-brand-50/50 p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="grid size-8 place-items-center rounded-xl bg-brand-600 text-white">
+                    <Sparkles className="size-4.5" />
+                  </span>
+                  <div>
+                    <h4 className="font-bold text-ink text-base">
+                      发现新版本 v{updateInfo.latestVersion}！
+                    </h4>
+                    <p className="text-xs text-ink-mute">
+                      发布于 {updateInfo.publishedAt || '最近'} · 当前运行 v{updateInfo.currentVersion}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {primaryDownloadUrl && (
+                    <Button
+                      icon={Download}
+                      onClick={() => openExternalUrl(primaryDownloadUrl)}
+                    >
+                      {primaryLabel}
+                    </Button>
+                  )}
+                  <Button
+                    variant="soft"
+                    icon={ExternalLink}
+                    onClick={() => openExternalUrl(updateInfo.htmlUrl)}
+                  >
+                    查看 Release 说明
+                  </Button>
+                </div>
+              </div>
+
+              {/* 更新日志 */}
+              <div className="rounded-2xl border border-brand-200/60 bg-white p-3.5">
+                <p className="text-xs font-bold text-ink-mute mb-1">更新日志：</p>
+                <div className="text-sm text-ink leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto">
+                  {updateInfo.releaseNotes}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 rounded-2xl bg-mint-50 p-4 border border-mint-200 text-mint-900 text-sm">
+              <CheckCircle2 className="size-5 shrink-0 text-mint-600" />
+              <div>
+                <p className="font-bold">当前已是最新版本 (v{APP_VERSION})</p>
+                <p className="mt-0.5 text-xs text-mint-700">
+                  没有检测到待更新的程序，你可以放心使用所有最新功能与题库。
+                </p>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* 核心特性与技术架构 */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-bold text-ink">系统与技术架构</h4>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-2xl border border-line bg-canvas/60 p-4 space-y-1.5">
+            <div className="flex items-center gap-2 text-brand-700 font-bold text-sm">
+              <Cpu className="size-4.5" />
+              <span>本地 Qwen 大模型</span>
+            </div>
+            <p className="text-xs text-ink-soft leading-relaxed">
+              通过 llama.cpp 直接调用显卡或芯片本地推理，断网可用，所有写作数据与批改仅保留在本地。
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-line bg-canvas/60 p-4 space-y-1.5">
+            <div className="flex items-center gap-2 text-brand-700 font-bold text-sm">
+              <Mic className="size-4.5" />
+              <span>阿里 SenseVoice ASR</span>
+            </div>
+            <p className="text-xs text-ink-soft leading-relaxed">
+              集成阿里达摩院 SenseVoice 本地极速语音转写，孩子开口说话 0.2 秒实时上屏，顺畅无阻。
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-line bg-canvas/60 p-4 space-y-1.5">
+            <div className="flex items-center gap-2 text-brand-700 font-bold text-sm">
+              <Laptop className="size-4.5" />
+              <span>跨平台 Tauri 架构</span>
+            </div>
+            <p className="text-xs text-ink-soft leading-relaxed">
+              基于 Rust + Tauri 2.0，同时支持 macOS 与 Windows 原生极速运行，云端 GitHub 自动化构建分发。
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 /* ───────────────────────────── 家长区弹窗 ───────────────────────────── */
 
-export const ParentZone: React.FC<ParentZoneProps> = ({ open, onClose, currentGrade }) => {
-  const [tab, setTab] = useState<TabId>('model');
+export const ParentZone: React.FC<ParentZoneProps> = ({ open, onClose, currentGrade, initialTab = 'model' }) => {
+  const [tab, setTab] = useState<TabId>(initialTab);
+
+  useEffect(() => {
+    if (open && initialTab) {
+      setTab(initialTab);
+    }
+  }, [open, initialTab]);
 
   return (
     <Dialog
@@ -762,6 +978,7 @@ export const ParentZone: React.FC<ParentZoneProps> = ({ open, onClose, currentGr
             { value: 'genre', label: '体裁库' },
             { value: 'prompt', label: '提示词库' },
             { value: 'data', label: '数据' },
+            { value: 'about', label: '关于与更新' },
           ]}
         />
         <div role="tabpanel" aria-label="家长区内容" className="min-h-[30rem]">
@@ -770,6 +987,7 @@ export const ParentZone: React.FC<ParentZoneProps> = ({ open, onClose, currentGr
           {tab === 'genre' && <GenreTab />}
           {tab === 'prompt' && <PromptTab gradeId={currentGrade} />}
           {tab === 'data' && <DataTab />}
+          {tab === 'about' && <AboutTab />}
         </div>
       </div>
     </Dialog>
