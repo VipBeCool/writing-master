@@ -151,11 +151,18 @@
   font-family: var(--font-read);
   letter-spacing: 0.04em;
   line-height: 2;
+  text-align: justify;
+  text-justify: inter-ideograph;
 }
 
-/* 中文作文自然段首行空两格（结合 letter-spacing: 0.04em，2 * 1.04em = 2.08em 恰好与下一行第 3 字左对齐） */
+/* 中文作文自然段首行空两格，两端对齐保证右侧边缘整齐平直，末行左对齐 */
 .paper-reading .essay-paragraph {
   text-indent: 2.08em;
+  text-align: justify;
+  text-justify: inter-ideograph;
+  text-align-last: left;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 /* 稿纸：行线随文字一起滚动 */

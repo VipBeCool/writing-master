@@ -93,7 +93,7 @@ export const AudioInputButton: React.FC<AudioInputButtonProps> = ({
       setMessage(null);
     } catch (err: any) {
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setMessage('麦克风权限被拒绝，请在系统设置中允许小语作文使用麦克风。');
+        setMessage('麦克风权限被拒绝，请在系统设置中允许作文大师使用麦克风。');
       } else {
         setMessage('启动麦克风失败，可以直接打字输入。');
       }

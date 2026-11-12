@@ -191,8 +191,8 @@ const Sidebar: React.FC<Omit<AppShellProps, 'children'>> = ({
       <div className="flex items-center gap-3 px-1">
         <Mascot mood="hello" size={52} />
         <div>
-          <p className="text-xl font-extrabold leading-tight tracking-tight text-ink">小语作文</p>
-          <p className="text-sm text-ink-mute">你的 AI 写作小伙伴</p>
+          <p className="text-xl font-extrabold leading-tight tracking-tight text-ink">作文大师</p>
+          <p className="text-sm text-ink-mute">你的 AI 写作导师</p>
         </div>
       </div>
 
@@ -244,7 +244,7 @@ const Sidebar: React.FC<Omit<AppShellProps, 'children'>> = ({
           className="group flex w-full items-center justify-between rounded-xl px-3 py-1.5 text-xs font-semibold text-ink-mute transition-colors hover:bg-canvas hover:text-brand-700"
           title="点击查看关于与检查更新"
         >
-          <span>小语作文 v{APP_VERSION}</span>
+          <span>作文大师 v{APP_VERSION}</span>
           <span className="opacity-0 transition-opacity group-hover:opacity-100 text-[11px] font-bold text-brand-600">
             检查更新 →
           </span>
@@ -264,7 +264,7 @@ const TopBar: React.FC<Pick<AppShellProps, 'grade' | 'onGradeChange' | 'llmStatu
 }) => (
   <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-white/95 px-4 py-2 backdrop-blur print:hidden lg:hidden">
     <Mascot mood="hello" size={40} />
-    <p className="shrink-0 text-lg font-extrabold tracking-tight whitespace-nowrap text-ink">小语作文</p>
+    <p className="shrink-0 text-lg font-extrabold tracking-tight whitespace-nowrap text-ink">作文大师</p>
     <div className="ml-auto flex items-center gap-2">
       <ModelStatus status={llmStatus} compact />
       <div className="w-28">

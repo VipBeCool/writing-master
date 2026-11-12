@@ -807,13 +807,13 @@ const AboutTab: React.FC = () => {
         <Mascot mood="cheer" size={80} />
         <div className="flex-1 text-center sm:text-left space-y-1.5">
           <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
-            <h3 className="text-xl font-extrabold text-ink tracking-tight">小语作文</h3>
+            <h3 className="text-xl font-extrabold text-ink tracking-tight">作文大师</h3>
             <span className="rounded-full bg-brand-100 px-3 py-0.5 text-xs font-bold text-brand-800">
               v{APP_VERSION}
             </span>
           </div>
           <p className="text-sm text-ink-soft">
-            专为孩子打造的 AI 写作小伙伴 · 本地大模型驱动 · 100% 隐私安全
+            专为中小学生打造的 AI 写作导师 · 本地大模型驱动 · 100% 隐私安全
           </p>
           <div className="pt-2 flex flex-wrap items-center justify-center sm:justify-start gap-3">
             <Button

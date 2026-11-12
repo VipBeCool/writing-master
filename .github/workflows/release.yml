@@ -42,8 +42,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: '小语作文 ${{ github.ref_name }}'
-          releaseBody: '小语作文 AI 作文训练助手最新发布版本。'
+          releaseName: '作文大师 ${{ github.ref_name }}'
+          releaseBody: '作文大师 AI 写作训练助手最新发布版本。'
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

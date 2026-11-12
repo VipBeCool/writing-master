@@ -38,7 +38,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({ open, onClose, updat
       open={open}
       onClose={onClose}
       title="发现新版本！"
-      description={`小语作文已发布新版本 v${updateInfo.latestVersion}`}
+      description={`作文大师已发布新版本 v${updateInfo.latestVersion}`}
       maxWidth="38rem"
       icon={<Sparkles className="mt-0.5 size-6 text-brand-600" aria-hidden="true" />}
     >
@@ -59,7 +59,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({ open, onClose, updat
               )}
             </div>
             <h4 className="mt-1 font-bold text-ink text-base truncate">
-              {updateInfo.releaseName || '小语作文最新版本'}
+              {updateInfo.releaseName || '作文大师最新版本'}
             </h4>
             <p className="mt-0.5 text-xs text-ink-soft">
               建议升级以体验最新的作文指导能力与功能改进。

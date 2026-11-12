@@ -138,7 +138,7 @@ export const App: React.FC = () => {
   const firstRender = useRef(true);
   useEffect(() => {
     const label = NAV.find((n) => n.id === page)?.label ?? '';
-    document.title = `${label} · 小语作文`;
+    document.title = `${label} · 作文大师`;
     if (firstRender.current) {
       firstRender.current = false;
       return;

@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "小语作文",
+  "productName": "作文大师",
   "version": "1.0.0",
   "identifier": "com.writingmaster.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "小语作文 · 你的 AI 写作小伙伴",
+        "title": "作文大师 · 你的 AI 写作导师",
         "width": 1280,
         "height": 840,
         "minWidth": 980,
