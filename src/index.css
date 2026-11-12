@@ -165,6 +165,15 @@
   overflow-wrap: break-word;
 }
 
+/* 中文两端对齐通用工具类：保证长句、分析列表、提示卡片右侧边缘整齐平直，末行自然靠左 */
+.text-justify-zh {
+  text-align: justify;
+  text-justify: inter-ideograph;
+  text-align-last: left;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
 /* 稿纸：行线随文字一起滚动 */
 .lined-paper {
   --line-h: 2.25rem;

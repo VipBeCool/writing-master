@@ -174,7 +174,7 @@ export const WritingPad: React.FC<WritingPadProps> = ({
             </h2>
             {hint || hintBusy ? (
               <SpeechBubble mood="think" accent="coral">
-                <span className="whitespace-pre-line">{hint}</span>
+                <span className="text-justify-zh whitespace-pre-line">{hint}</span>
                 {hintBusy && <span className="caret" aria-hidden="true" />}
               </SpeechBubble>
             ) : (

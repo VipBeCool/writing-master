@@ -483,7 +483,7 @@ export const EssayCoach: React.FC<EssayCoachProps> = ({
                         </h2>
                         <ul className="space-y-2">
                           {report.diagnostics.runOnSentenceWarning.map((w, i) => (
-                            <li key={i} className="rounded-xl bg-white/85 p-3 text-base leading-relaxed text-ink">
+                            <li key={i} className="text-justify-zh rounded-xl bg-white/85 p-3 text-base leading-relaxed text-ink">
                               {w}
                             </li>
                           ))}
@@ -498,7 +498,7 @@ export const EssayCoach: React.FC<EssayCoachProps> = ({
                     </h2>
                     <ul className="space-y-2">
                       {report.diagnostics.goodPoints.map((p, i) => (
-                        <li key={i} className="rounded-xl bg-white/80 p-3 text-base leading-relaxed text-ink">
+                        <li key={i} className="text-justify-zh rounded-xl bg-white/80 p-3 text-base leading-relaxed text-ink">
                           {p}
                         </li>
                       ))}
@@ -515,7 +515,7 @@ export const EssayCoach: React.FC<EssayCoachProps> = ({
                         </h2>
                         <ul className="space-y-2">
                           {report.diagnostics.runOnSentenceWarning.map((w, i) => (
-                            <li key={i} className="rounded-xl bg-white/80 p-3 text-base leading-relaxed text-ink">
+                            <li key={i} className="text-justify-zh rounded-xl bg-white/80 p-3 text-base leading-relaxed text-ink">
                               {w}
                             </li>
                           ))}
@@ -530,7 +530,7 @@ export const EssayCoach: React.FC<EssayCoachProps> = ({
                     </h2>
                     <ul className="space-y-2">
                       {report.diagnostics.improvementSuggestions.map((p, i) => (
-                        <li key={i} className="rounded-xl bg-sun-50 p-3 text-base leading-relaxed text-ink">
+                        <li key={i} className="text-justify-zh rounded-xl bg-sun-50 p-3 text-base leading-relaxed text-ink">
                           {p}
                         </li>
                       ))}
@@ -550,7 +550,7 @@ export const EssayCoach: React.FC<EssayCoachProps> = ({
                               <ArrowRight className="size-4 text-ink-mute" aria-hidden="true" />
                               <strong className="text-mint-700">“{t.fix}”</strong>
                             </p>
-                            <p className="text-sm text-ink-soft">老师提示：{t.reason}</p>
+                            <p className="text-justify-zh text-sm text-ink-soft">老师提示：{t.reason}</p>
                           </li>
                         ))}
                       </ul>

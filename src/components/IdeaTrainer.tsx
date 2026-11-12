@@ -460,7 +460,7 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
             <>
               <section className="anim-fade-up space-y-4">
                 <SpeechBubble mood="cheer" title="小导师夸夸你" accent="sun">
-                  {session.aiFeedback.praise}
+                  <div className="text-justify-zh">{session.aiFeedback.praise}</div>
                 </SpeechBubble>
 
                 <Card className="space-y-4">
@@ -478,7 +478,7 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
                           </span>
                           <div className="min-w-0 space-y-1">
                             {tag && <Badge accent="sun">{tag}</Badge>}
-                            <p className="text-base leading-relaxed text-ink">{text}</p>
+                            <p className="text-justify-zh text-base leading-relaxed text-ink">{text}</p>
                           </div>
                         </li>
                       );
@@ -486,7 +486,7 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
                   </ol>
                   <p className="flex items-start gap-2 rounded-2xl bg-canvas px-4 py-3 text-base text-ink-soft">
                     <Sparkles className="mt-0.5 size-5 shrink-0 text-brand-600" aria-hidden="true" />
-                    <span>
+                    <span className="text-justify-zh">
                       <strong className="text-ink">提分点拨：</strong>
                       {session.aiFeedback.keyTips}
                     </span>
