@@ -127,36 +127,40 @@ impl ServiceManager {
         (binary, work_dir, models_dir, preset_file)
     }
 
-    /// 探测本地 ASR 语音模型服务（SenseVoice / Whisper 等）
-    pub fn detect_asr_paths() -> (Option<PathBuf>, Option<PathBuf>) {
-        let mut binary: Option<PathBuf> = None;
-        let mut model_file: Option<PathBuf> = None;
-
+    /// 获取本地 ASR 语音模型服务的启动命令（SenseVoice / FastAPI 极速服务）
+    pub fn get_asr_command() -> Option<Command> {
         #[cfg(target_os = "macos")]
         {
             if let Ok(home) = std::env::var("HOME") {
-                let home_path = PathBuf::from(home);
-                let candidates = [
-                    home_path.join("llama.cpp/sensevoice-server"),
-                    home_path.join("llama.cpp/build/bin/sensevoice-server"),
-                    home_path.join("llama.cpp/whisper-server"),
-                    PathBuf::from("/usr/local/bin/sensevoice-server"),
-                ];
-                for c in candidates {
-                    if c.is_file() {
-                        binary = Some(c);
-                        break;
+                let home_path = PathBuf::from(&home);
+                let script_path = home_path.join("llama.cpp/scripts/asr-server.py");
+                if script_path.is_file() {
+                    let py_candidates = [
+                        home_path.join(".venvs/main/bin/python3"),
+                        PathBuf::from("/usr/local/bin/python3"),
+                        PathBuf::from("/opt/homebrew/bin/python3"),
+                    ];
+                    for py in py_candidates {
+                        if py.is_file() {
+                            let mut cmd = Command::new(py);
+                            cmd.arg(&script_path);
+                            return Some(cmd);
+                        }
                     }
+                    let mut cmd = Command::new("python3");
+                    cmd.arg(&script_path);
+                    return Some(cmd);
                 }
 
-                let model_candidates = [
-                    home_path.join("models/sensevoice-small-q8.gguf"),
-                    home_path.join("models/sensevoice-small.gguf"),
+                let bin_candidates = [
+                    home_path.join("llama.cpp/sensevoice-server"),
+                    home_path.join("llama.cpp/build/bin/sensevoice-server"),
                 ];
-                for m in model_candidates {
-                    if m.is_file() {
-                        model_file = Some(m);
-                        break;
+                for b in bin_candidates {
+                    if b.is_file() {
+                        let mut cmd = Command::new(b);
+                        cmd.arg("--port").arg("8000");
+                        return Some(cmd);
                     }
                 }
             }
@@ -164,30 +168,21 @@ impl ServiceManager {
 
         #[cfg(target_os = "windows")]
         {
-            let candidates = [
-                PathBuf::from(r"C:\llama.cpp\sensevoice-server.exe"),
-                PathBuf::from(r"C:\models\sensevoice-server.exe"),
-            ];
-            for c in candidates {
-                if c.is_file() {
-                    binary = Some(c);
-                    break;
-                }
+            let script_path = PathBuf::from(r"C:\llama.cpp\scripts\asr-server.py");
+            if script_path.is_file() {
+                let mut cmd = Command::new("python");
+                cmd.arg(&script_path);
+                return Some(cmd);
             }
-
-            let model_candidates = [
-                PathBuf::from(r"C:\models\sensevoice-small-q8.gguf"),
-                PathBuf::from(r"C:\llama.cpp\models\sensevoice-small-q8.gguf"),
-            ];
-            for m in model_candidates {
-                if m.is_file() {
-                    model_file = Some(m);
-                    break;
-                }
+            let bin_path = PathBuf::from(r"C:\llama.cpp\sensevoice-server.exe");
+            if bin_path.is_file() {
+                let mut cmd = Command::new(bin_path);
+                cmd.arg("--port").arg("8000");
+                return Some(cmd);
             }
         }
 
-        (binary, model_file)
+        None
     }
 
     /// 启动后台 llama-server (8080)
@@ -296,19 +291,15 @@ impl ServiceManager {
             return;
         }
 
-        let (binary_opt, model_opt) = Self::detect_asr_paths();
-        let (binary_path, model_path) = match (binary_opt, model_opt) {
-            (Some(b), Some(m)) => (b, m),
-            _ => {
-                println!("[Tauri] 未检测到配套的本地 ASR 二进制程序，语音服务暂不自启。");
+        let mut cmd = match Self::get_asr_command() {
+            Some(c) => c,
+            None => {
+                println!("[Tauri] 未检测到本地 ASR 服务脚本或二进制，语音服务暂不自启。");
                 return;
             }
         };
 
-        println!("[Tauri] 准备启动本地 ASR 语音服务: {:?}", binary_path);
-        let mut cmd = Command::new(&binary_path);
-        cmd.arg("-m").arg(&model_path);
-        cmd.arg("--port").arg(port.to_string());
+        println!("[Tauri] 准备启动本地 ASR 语音服务...");
 
         #[cfg(windows)]
         {
