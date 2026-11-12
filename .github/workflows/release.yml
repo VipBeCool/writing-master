@@ -25,12 +25,26 @@ jobs:
         with:
           script: |
             const tag = context.ref.replace('refs/tags/', '');
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 30,
+            });
+            for (const r of releases) {
+              if (r.tag_name === tag) {
+                await github.rest.repos.deleteRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: r.id,
+                });
+              }
+            }
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
               name: `作文大师 ${tag}`,
-              body: `## 🌟 作文大师 ${tag} 正式发布\n\n全能智能辅导写作导师桌面客户端。\n\n### ✨ 本次更新重点：\n- 🎯 **AI 专属动态修改灵感**：结合当前文章、体裁与修改历史动态推荐，支持一键“换一批”\n- 📊 **客观字数差值展示**：告别生硬判断，清晰显示超出/缺少字数\n- 🎨 **全文两端对齐排版**：视觉整洁清爽\n- 🔄 **应用内原生无感自动升级**：点击更新自动完成下载重启\n- 🎙️ **本地极速语音识别转写支持**\n\n### 📦 安装包说明：\n- **Windows 电脑**：请下载并安装 \`.exe\` 或 \`.msi\` 安装包\n- **Mac 苹果电脑（M1/M2/M3/M4 系列）**：请下载 \`_aarch64.dmg\`\n- **Mac 苹果电脑（Intel 芯片）**：请下载 \`_x64.dmg\``,
+              body: `## 🌟 作文大师 ${tag} 正式发布\n\n全能智能辅导写作导师桌面客户端。\n\n### ✨ 本次更新重点：\n- ⚖️ **多轮修改全局篇幅统筹**：AI 整体把握全篇结构与总字数，有增有减、详略得当，告别越改越长\n- 🎯 **AI 专属动态修改灵感**：结合当前文章、篇幅状态与修改历史动态推荐，支持一键“换一批”\n- 📊 **客观字数差值展示**：告别生硬判断，清晰显示超出/缺少字数\n- 🎨 **全文两端对齐排版**：视觉整洁清爽\n- 🔄 **应用内原生无感自动升级**：点击更新自动完成下载重启\n- 🎙️ **本地极速语音识别转写支持**\n\n### 📦 安装包说明：\n- **Mac 苹果电脑（通用版）**：请下载 \`_universal.dmg\`（同时原生支持 Apple M1/M2/M3/M4 与 Intel 芯片）\n- **Windows 电脑**：请下载 \`_x64-setup.exe\` 简体中文安装包`,
               draft: true,
               prerelease: false
             });
@@ -45,11 +59,8 @@ jobs:
       matrix:
         include:
           - platform: 'macos-latest'
-            target: 'aarch64-apple-darwin'
-            args: '--target aarch64-apple-darwin'
-          - platform: 'macos-latest'
-            target: 'x86_64-apple-darwin'
-            args: '--target x86_64-apple-darwin'
+            target: 'aarch64-apple-darwin,x86_64-apple-darwin'
+            args: '--target universal-apple-darwin'
           - platform: 'windows-latest'
             target: 'x86_64-pc-windows-msvc'
             args: '--target x86_64-pc-windows-msvc'
