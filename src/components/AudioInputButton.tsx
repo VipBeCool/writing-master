@@ -71,7 +71,14 @@ export const AudioInputButton: React.FC<AudioInputButtonProps> = ({
             signal: AbortSignal.timeout(10000),
           });
 
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if (!response.ok) {
+            let errorMsg = `HTTP ${response.status}`;
+            try {
+              const errData = await response.json();
+              if (errData?.error) errorMsg = errData.error;
+            } catch {}
+            throw new Error(errorMsg);
+          }
           const data = await response.json();
           const text = (data?.text || '').trim();
           if (text) {
@@ -80,8 +87,14 @@ export const AudioInputButton: React.FC<AudioInputButtonProps> = ({
           } else {
             setMessage('没听清，请靠麦克风近一点再试一次哦。');
           }
-        } catch {
-          setMessage('本地语音服务（8000端口）暂未连接，可直接打字输入。');
+        } catch (err: any) {
+          console.error('[ASR] 识别异常:', err);
+          const msg = String(err?.message || '');
+          if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('abort')) {
+            setMessage('本地语音服务（8000端口）暂未就绪，可直接打字输入。');
+          } else {
+            setMessage(`语音转写提示: ${msg || '服务未响应'}，可直接打字。`);
+          }
         } finally {
           setIsProcessing(false);
           setIsListening(false);

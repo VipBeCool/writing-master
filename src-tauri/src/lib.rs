@@ -140,15 +140,30 @@ impl ServiceManager {
                         PathBuf::from("/usr/local/bin/python3"),
                         PathBuf::from("/opt/homebrew/bin/python3"),
                     ];
+                    let venv_dir = home_path.join(".venvs/main");
+                    let default_path = format!(
+                        "{}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+                        venv_dir.join("bin").to_string_lossy()
+                    );
+
                     for py in py_candidates {
                         if py.is_file() {
                             let mut cmd = Command::new(py);
                             cmd.arg(&script_path);
+                            cmd.current_dir(&home_path.join("llama.cpp"));
+                            cmd.env("HOME", &home);
+                            cmd.env("PATH", &default_path);
+                            if venv_dir.is_dir() {
+                                cmd.env("VIRTUAL_ENV", &venv_dir);
+                            }
                             return Some(cmd);
                         }
                     }
                     let mut cmd = Command::new("python3");
                     cmd.arg(&script_path);
+                    cmd.current_dir(&home_path.join("llama.cpp"));
+                    cmd.env("HOME", &home);
+                    cmd.env("PATH", &default_path);
                     return Some(cmd);
                 }
 
@@ -300,6 +315,13 @@ impl ServiceManager {
         };
 
         println!("[Tauri] 准备启动本地 ASR 语音服务...");
+
+        if let Ok(log_file) = std::fs::File::create("/tmp/writingmaster-asr.log") {
+            if let Ok(err_file) = log_file.try_clone() {
+                cmd.stdout(log_file);
+                cmd.stderr(err_file);
+            }
+        }
 
         #[cfg(windows)]
         {
