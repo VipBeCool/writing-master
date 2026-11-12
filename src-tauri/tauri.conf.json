@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "作文大师",
+  "productName": "WritingMaster",
   "version": "1.0.0",
   "identifier": "com.writingmaster.desktop",
   "build": {
