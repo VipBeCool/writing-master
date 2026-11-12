@@ -42,6 +42,61 @@ export function getClientPlatform(): 'mac' | 'windows' | 'other' {
   return 'other';
 }
 
+/** 判断是否在 Tauri 桌面应用环境 */
+export function isTauriApp(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+/** 执行应用内自动更新：下载更新包、自动替换并重启应用 */
+export async function performInAppUpdate(
+  onProgress?: (percent: number, statusText: string) => void
+): Promise<void> {
+  if (!isTauriApp()) {
+    throw new Error('当前处于浏览器开发环境，无法执行原生客户端自动更新。');
+  }
+
+  const { check } = await import('@tauri-apps/plugin-updater');
+  const { relaunch } = await import('@tauri-apps/plugin-process');
+
+  onProgress?.(0, '正在连接更新服务器…');
+  const update = await check();
+
+  if (!update) {
+    throw new Error('未检测到可安装的新版本更新包。');
+  }
+
+  let totalBytes = 0;
+  let downloadedBytes = 0;
+
+  onProgress?.(1, '正在下载更新包…');
+
+  await update.downloadAndInstall((event) => {
+    switch (event.event) {
+      case 'Started':
+        totalBytes = event.data.contentLength || 0;
+        onProgress?.(2, '开始下载…');
+        break;
+      case 'Progress':
+        downloadedBytes += event.data.chunkLength;
+        if (totalBytes > 0) {
+          const pct = Math.min(99, Math.round((downloadedBytes / totalBytes) * 100));
+          onProgress?.(pct, `正在下载并安装 ${pct}%…`);
+        } else {
+          onProgress?.(50, '正在下载更新包…');
+        }
+        break;
+      case 'Finished':
+        onProgress?.(100, '下载安装完成，正在准备重启…');
+        break;
+    }
+  });
+
+  onProgress?.(100, '更新完成！正在自动重启应用…');
+  // 稍作停顿让用户看到完成状态，随后立即重启进入新版本
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  await relaunch();
+}
+
 /** 在系统浏览器中安全打开外部链接 */
 export function openExternalUrl(url: string) {
   if (!url) return;

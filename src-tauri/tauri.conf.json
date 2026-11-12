@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "macOS": {
       "infoPlist": "Info.plist"
     },
@@ -40,6 +41,14 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/VipBeCool/writing-master/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ4NDlBMzA1NTI5NEVGNEQKUldSTjc1UlNCYU5KMklmSTRtMW84R01vVDY1RHpDZ0lxYWNoMGZlSWY4UVdaVDNucmV6SmE4QUQK"
     }
   }
 }

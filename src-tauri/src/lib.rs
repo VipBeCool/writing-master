@@ -382,6 +382,8 @@ pub fn run() {
     let mgr_for_events = service_manager.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(service_manager)
         .invoke_handler(tauri::generate_handler![get_service_status])
         .setup(move |_app| {

@@ -7,6 +7,7 @@ import {
   ExternalLink,
   FileUp,
   Laptop,
+  Loader2,
   Mic,
   RefreshCw,
   RotateCcw,
@@ -25,7 +26,9 @@ import {
   checkForAppUpdates,
   getClientPlatform,
   GITHUB_REPO,
+  isTauriApp,
   openExternalUrl,
+  performInAppUpdate,
   type UpdateInfo,
 } from '../services/updateService';
 import {
@@ -770,11 +773,18 @@ const AboutTab: React.FC = () => {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hasChecked, setHasChecked] = useState(false);
+
+  const [updating, setUpdating] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateStatusText, setUpdateStatusText] = useState('');
+  const [updateActionError, setUpdateActionError] = useState<string | null>(null);
+
   const platform = getClientPlatform();
 
   const handleCheck = async () => {
     setChecking(true);
     setError(null);
+    setUpdateActionError(null);
     try {
       const info = await checkForAppUpdates();
       setUpdateInfo(info);
@@ -786,19 +796,37 @@ const AboutTab: React.FC = () => {
     }
   };
 
-  const primaryDownloadUrl =
+  const handleStartUpdate = async () => {
+    setUpdating(true);
+    setUpdateActionError(null);
+    setUpdateProgress(0);
+    setUpdateStatusText('准备开始自动更新…');
+
+    try {
+      if (isTauriApp()) {
+        await performInAppUpdate((pct, text) => {
+          setUpdateProgress(pct);
+          setUpdateStatusText(text);
+        });
+      } else {
+        const fallbackUrl =
+          platform === 'mac'
+            ? updateInfo?.macDownloadUrl || updateInfo?.htmlUrl
+            : updateInfo?.windowsDownloadUrl || updateInfo?.htmlUrl;
+        if (fallbackUrl) openExternalUrl(fallbackUrl);
+        setUpdating(false);
+      }
+    } catch (err) {
+      console.error('自动更新失败:', err);
+      setUpdateActionError(err instanceof Error ? err.message : '自动更新未能完成');
+      setUpdating(false);
+    }
+  };
+
+  const fallbackDownloadUrl =
     platform === 'mac'
       ? updateInfo?.macDownloadUrl || updateInfo?.htmlUrl
       : updateInfo?.windowsDownloadUrl || updateInfo?.htmlUrl;
-
-  const primaryLabel =
-    platform === 'mac'
-      ? updateInfo?.macDownloadUrl
-        ? '下载 macOS 安装包 (.dmg)'
-        : '前往下载更新'
-      : updateInfo?.windowsDownloadUrl
-        ? '下载 Windows 安装包 (.exe)'
-        : '前往下载更新';
 
   return (
     <div className="space-y-6">
@@ -818,7 +846,7 @@ const AboutTab: React.FC = () => {
           <div className="pt-2 flex flex-wrap items-center justify-center sm:justify-start gap-3">
             <Button
               icon={RefreshCw}
-              disabled={checking}
+              disabled={checking || updating}
               onClick={handleCheck}
             >
               {checking ? '正在检查最新版本…' : '检查新版本'}
@@ -867,24 +895,58 @@ const AboutTab: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  {primaryDownloadUrl && (
+                {!updating && (
+                  <div className="flex items-center gap-2">
                     <Button
-                      icon={Download}
-                      onClick={() => openExternalUrl(primaryDownloadUrl)}
+                      icon={RefreshCw}
+                      onClick={handleStartUpdate}
                     >
-                      {primaryLabel}
+                      立即自动更新
+                    </Button>
+                    <Button
+                      variant="soft"
+                      icon={ExternalLink}
+                      onClick={() => openExternalUrl(updateInfo.htmlUrl)}
+                    >
+                      查看 Release
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* 更新中进度条卡片 */}
+              {updating && (
+                <div className="rounded-2xl border border-brand-200 bg-white p-4 space-y-2.5 anim-fade-up">
+                  <div className="flex items-center justify-between text-sm font-bold text-ink">
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="size-4 animate-spin text-brand-600" />
+                      {updateStatusText || '正在自动就地更新…'}
+                    </span>
+                    <span className="text-brand-700">{updateProgress}%</span>
+                  </div>
+                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-brand-100">
+                    <div
+                      className="h-full bg-brand-600 transition-all duration-300 rounded-full"
+                      style={{ width: `${Math.max(4, updateProgress)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-ink-mute">
+                    更新完成后应用将自动重启，无需手动干预。
+                  </p>
+                </div>
+              )}
+
+              {/* 更新异常 */}
+              {updateActionError && (
+                <div className="rounded-2xl border border-coral-200 bg-coral-50 p-3 text-xs text-coral-800 flex items-center justify-between gap-2">
+                  <span>自动更新提示: {updateActionError}</span>
+                  {fallbackDownloadUrl && (
+                    <Button size="sm" variant="ghost" onClick={() => openExternalUrl(fallbackDownloadUrl)}>
+                      备用：打开下载
                     </Button>
                   )}
-                  <Button
-                    variant="soft"
-                    icon={ExternalLink}
-                    onClick={() => openExternalUrl(updateInfo.htmlUrl)}
-                  >
-                    查看 Release 说明
-                  </Button>
                 </div>
-              </div>
+              )}
 
               {/* 更新日志 */}
               <div className="rounded-2xl border border-brand-200/60 bg-white p-3.5">
