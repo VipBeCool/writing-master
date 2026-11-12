@@ -822,3 +822,142 @@ export async function compareEssays(
     (d) => d.originalExcerpt?.trim() && d.upgradedExcerpt?.trim() && flatOriginal.includes(normalize(d.originalExcerpt))
   );
 }
+
+/**
+ * 智能分析上下文兜底：根据标题中的核心事物/情节关键词与体裁，生成高度针对性的修改灵感
+ */
+export function getContextualFallbackSuggestions(title: string, genre: string, stage: string): string[] {
+  const cleanTitle = title.replace(/《|》/g, '').trim();
+
+  // 1. 食物/小吃类
+  if (/豌豆黄|糖葫芦|包子|烤鸭|美食|蛋糕|饺子|年夜饭|红烧肉|奶茶|火锅|面条/i.test(cleanTitle)) {
+    return [
+      `细写${cleanTitle}香甜诱人的口感`,
+      '加入制作或品尝时的动作神态',
+      '融入老北京或家乡的烟火气',
+      '结尾借食物寄托温暖深情',
+    ];
+  }
+
+  // 2. 动植物/景物类
+  if (/猫|狗|鸟|花|树|春|夏|秋|冬|雨|雪|湖|海|山|黄昏|晨曦|阳光|月光/i.test(cleanTitle) || genre === '写景') {
+    return [
+      `抓住${cleanTitle || '景物'}最有特色的神态外貌`,
+      '运用比喻拟人让描写活起来',
+      '加入声色光影的多重感官',
+      '借景抒情表达内心的触动',
+    ];
+  }
+
+  // 3. 人物类
+  if (/妈妈|爸爸|爷爷|奶奶|老师|同桌|朋友|清洁工|门卫|背影/i.test(cleanTitle) || genre === '写人') {
+    return [
+      '用一个标志性动作刻画人物性格',
+      '加入一段生动传神的个性对话',
+      '选取一件典型小事以小见大',
+      '结尾抒发真挚的情感共鸣',
+    ];
+  }
+
+  // 4. 活动/赛事/事件类
+  if (/运动会|比赛|考试|旅行|游戏|拔河|春游|争吵|误会|感动|难忘|秘密/i.test(cleanTitle) || genre === '记事') {
+    return [
+      '慢动作特写最激动人心的瞬间',
+      '加入周围人的热烈反应作烘托',
+      '细致描绘一波三折的心理变化',
+      '结尾升华这一刻的感悟与成长',
+    ];
+  }
+
+  // 5. 议论文 / 读后感类
+  if (genre === '议论' || genre === '读后感') {
+    return [
+      '补充一个具有时代感的新鲜事例',
+      '加强正反论证对比突出力度',
+      '立意提升至社会或成长思辨',
+      '语言更凝练有力且富有哲理',
+    ];
+  }
+
+  // 6. 通用学段分级建议
+  if (stage === 'senior') {
+    return ['论据素材再新颖思辨一些', '加强正反对比与深层逻辑', '立意提升至时代与社会高度', '语言更凝练富有文采力量'];
+  }
+  if (stage === 'junior') {
+    return ['开头用悬念或排比引人入胜', '加强特写镜头与细节描写', '让文章的立意更加深刻高远', '巧用对比让情节波澜起伏'];
+  }
+  return ['把开头改得更吸引人', '加一段身临其境的细节描写', '多一些生动的比喻和拟人', '结尾借物抒情更有深意'];
+}
+
+const REVISE_SUGGESTIONS_SCHEMA = {
+  type: 'object',
+  properties: {
+    suggestions: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '4个紧扣该篇作文具体细节、针对性极强的修改短语（6-12字）',
+    },
+  },
+  required: ['suggestions'],
+};
+
+/**
+ * 根据当前作文正文、修改历史与体裁，由 AI 动态生成针对这篇作文的专属修改建议短语
+ */
+export async function generateReviseSuggestions(params: {
+  title: string;
+  content: string;
+  genre: string;
+  stage: string;
+  recentChatSummary?: string;
+  signal?: AbortSignal;
+}): Promise<string[]> {
+  const { title, content, genre, stage, recentChatSummary, signal } = params;
+  if (!content.trim() && !title.trim()) {
+    return getContextualFallbackSuggestions(title, genre, stage);
+  }
+
+  const excerpt = content.slice(0, 600);
+  const messages: ChatMessage[] = [
+    {
+      role: 'system',
+      content: `你是一位专业的中小学语文特级名师。请根据学生当前的作文题目、体裁与具体段落，为学生量身生成 4 个非常具体、有针对性、富有启发性的下一步修改建议短语。
+要求：
+1. 必须紧密贴合这篇作文的具体情节、事物、感官或细节（例如题目为《金秋的豌豆黄》，建议应是“细写豌豆黄香甜细腻的口感”、“加入胡同叫卖的老北京吆喝声”等具体构思，绝不能用通用的空话套话）。
+2. 每个建议必须以动词开头（如“细写...”、“加入...”、“刻画...”、“突出...”、“结尾升华...”），字数严格控制在 6~12 个字以内。
+3. 请以规范 JSON 输出包含 suggestions 字段的对象。`,
+    },
+    {
+      role: 'user',
+      content: `作文题目：《${title || '未命名'}》
+体裁：${genre}
+${recentChatSummary ? `最近已修改过的方向：${recentChatSummary}\n` : ''}文章片段：
+${excerpt}
+
+请针对这篇文章，给出 4 个最具针对性、最值得学生继续修改的具体灵感短语：`,
+    },
+  ];
+
+  try {
+    const res = await chatJSON<{ suggestions: string[] }>({
+      messages,
+      schema: REVISE_SUGGESTIONS_SCHEMA,
+      temperature: 0.7,
+      maxTokens: 200,
+      signal,
+    });
+
+    if (res && Array.isArray(res.suggestions) && res.suggestions.length > 0) {
+      const cleaned = res.suggestions
+        .map((s) => String(s).replace(/^[\d\.\-\s、"“”']+|["“”']+$/g, '').trim())
+        .filter((s) => s.length >= 4 && s.length <= 16);
+      if (cleaned.length >= 2) {
+        return cleaned.slice(0, 4);
+      }
+    }
+  } catch (e) {
+    console.debug('AI 动态修改建议生成异常，使用上下文智能兜底:', e);
+  }
+
+  return getContextualFallbackSuggestions(title, genre, stage);
+}

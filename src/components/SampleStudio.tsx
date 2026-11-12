@@ -16,8 +16,14 @@ import {
   Sparkles,
 } from 'lucide-react';
 import type { GoldenSnippet, SavedEssay } from '../types';
-import { resolveGenre, type GradeProfile, type Stage } from '../data/gradeProfiles';
-import { generateSampleEssay, reviseEssay, countChars } from '../services/aiService';
+import { resolveGenre, type GradeProfile } from '../data/gradeProfiles';
+import {
+  generateSampleEssay,
+  reviseEssay,
+  countChars,
+  generateReviseSuggestions,
+  getContextualFallbackSuggestions,
+} from '../services/aiService';
 import { AudioInputButton } from './AudioInputButton';
 import { PhotoUploader } from './PhotoUploader';
 import { Mascot } from './Mascot';
@@ -48,14 +54,6 @@ interface SampleStudioProps {
 
 type SelectableSnippetTag = '自动识别' | GoldenSnippet['tag'];
 const TAG_OPTIONS: SelectableSnippetTag[] = ['自动识别', ...SNIPPET_TAGS];
-
-/** 一键修改建议：不同学段给不同的提法 */
-const QUICK_REQUESTS: Record<Stage, string[]> = {
-  lower: ['把开头改得更吸引人', '加一句心里想的话', '多用一个比喻', '结尾写得更温暖'],
-  upper: ['把开头改得更吸引人', '加一段心理描写', '多一些比喻拟人', '结尾更有感悟'],
-  junior: ['开头更吸引人', '加强细节描写', '让立意更深刻', '语言更有文采'],
-  senior: ['论据再新颖一些', '加强论证的逻辑', '让立意更有思辨性', '语言更凝练有力'],
-};
 
 const GREETING = '你好，我是小语！看看左边这篇范文，哪里想改就告诉我，比如“把第二段写得更生动”。';
 
@@ -100,6 +98,47 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
   // 对话框显示形态：docked（右侧并排常驻）| floating（右下角悬浮窗）| icon（缩成右下角小语图标）
   const [chatMode, setChatMode] = useState<ChatDisplayMode>('docked');
 
+  // AI 动态修改灵感建议（结合当前文章、体裁和修改历史量身生成）
+  const [suggestions, setSuggestions] = useState<string[]>(() =>
+    getContextualFallbackSuggestions(title, genre, profile.stage)
+  );
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
+  const refreshSuggestions = async (
+    targetTitle = title,
+    targetContent = essay,
+    recentRequest?: string
+  ) => {
+    if (!targetTitle.trim() && !targetContent.trim()) {
+      setSuggestions(getContextualFallbackSuggestions(targetTitle, genre, profile.stage));
+      return;
+    }
+    setLoadingSuggestions(true);
+    try {
+      const res = await generateReviseSuggestions({
+        title: targetTitle,
+        content: targetContent,
+        genre,
+        stage: profile.stage,
+        recentChatSummary: recentRequest,
+      });
+      if (res && res.length >= 2) {
+        setSuggestions(res);
+      }
+    } catch (e) {
+      console.debug('获取 AI 动态建议失败:', e);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  // 年级或体裁改变且尚未生成文章时，更新初始默认灵感
+  useEffect(() => {
+    if (!essay.trim()) {
+      setSuggestions(getContextualFallbackSuggestions(title, genre, profile.stage));
+    }
+  }, [profile.stage, genre]);
+
   // 换年级后，字数滑块回到新年级的默认值
   useEffect(() => {
     setWordCount(profile.defaultWordCount);
@@ -137,8 +176,11 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
         },
       });
       if (res.body.trim()) {
-        setVersions([{ title: res.title || title.trim(), content: res.body, label: '初稿' }]);
+        const nextTitle = res.title || title.trim();
+        setVersions([{ title: nextTitle, content: res.body, label: '初稿' }]);
         setActiveVersionIdx(0);
+        // 为新生成的初稿异步生成 AI 动态专属修改灵感
+        refreshSuggestions(nextTitle, res.body);
       }
     } catch (e: any) {
       console.error('范文生成出错:', e);
@@ -199,6 +241,8 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
           text: `好的，按“${request}”改好了！你可以在左边顶部随时切换查看不同版本对比，还想改哪里？`,
         },
       ]);
+      // 结合本次修改指令和最新内容，动态刷新下一步修改建议
+      refreshSuggestions(finalTitle, finalBody, request);
     } catch (e: any) {
       setEssay(previous); // 失败时恢复原文
       setTitle(previousTitle);
@@ -215,6 +259,8 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
     setActiveVersionIdx(idx);
     setTitle(target.title);
     setEssay(target.content);
+    // 切换到目标版本时，刷新该版本针对性的建议
+    refreshSuggestions(target.title, target.content, target.request);
   };
 
   const copy = async () => {
@@ -311,17 +357,37 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
         <div ref={chatEnd} />
       </div>
 
-      {/* 快捷改法气泡 */}
+      {/* AI 专属动态修改灵感气泡 */}
       <div className="space-y-1.5">
-        <p className="text-xs font-bold text-ink-mute">点一下就能让小语改：</p>
-        <div className="flex flex-wrap gap-1.5">
-          {QUICK_REQUESTS[profile.stage].map((q) => (
+        <div className="flex items-center justify-between">
+          <p className="flex items-center gap-1.5 text-xs font-bold text-ink-mute">
+            <Sparkles className="size-3.5 text-amber-500" aria-hidden="true" />
+            点一下就能让小语改{essay.trim() ? '（AI量身推荐）' : ''}：
+          </p>
+          {essay.trim() && (
+            <button
+              type="button"
+              disabled={loadingSuggestions || revising || busy}
+              onClick={() => {
+                const lastUserMsg = [...chat].reverse().find((m) => m.role === 'user')?.text;
+                refreshSuggestions(title, essay, lastUserMsg);
+              }}
+              className="inline-flex items-center gap-1 text-xs font-bold text-sky-600 transition-colors hover:text-sky-800 disabled:opacity-40"
+              title="根据当前文章重新换一批修改建议"
+            >
+              <RefreshCw className={`size-3 ${loadingSuggestions ? 'animate-spin' : ''}`} aria-hidden="true" />
+              <span>换一批</span>
+            </button>
+          )}
+        </div>
+        <div className={`flex flex-wrap gap-1.5 transition-opacity ${loadingSuggestions ? 'opacity-60' : 'opacity-100'}`}>
+          {suggestions.map((q) => (
             <button
               key={q}
               type="button"
               disabled={revising || busy || !essay}
               onClick={() => send(q)}
-              className="rounded-full border-2 border-sky-100 bg-white px-3 py-1 text-xs font-semibold text-sky-700 transition-colors hover:bg-sky-50 disabled:opacity-50 sm:text-sm"
+              className="rounded-full border-2 border-sky-100 bg-white px-3 py-1 text-xs font-semibold text-sky-700 shadow-xs transition-all hover:border-sky-300 hover:bg-sky-50 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
             >
               {q}
             </button>

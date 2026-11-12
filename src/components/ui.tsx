@@ -445,34 +445,27 @@ export const Badge: React.FC<{ accent?: Accent; children: React.ReactNode; class
 );
 
 /**
- * 字数统计小标签（对齐真实考场阅卷标准）：
- * - 0 ~ +80 字：字数达标（最佳篇幅）
- * - -20 ~ -1 字：基本达标（压线，最多允许少 20 字）
- * - +81 ~ +100 字：略多 x 字（仍在考场格子纸可接受范围内）
- * - 少于 -20 字：还差 x 字（考场会扣字数分，醒目提醒）
- * - 多于 +100 字：多了 x 字（超出考场篇幅，提醒精简）
+ * 字数统计小标签（客观展示与目标字数的差值，不用生硬的“达标”判断）：
+ * - diff === 0: 刚好 x 字
+ * - diff > 0: 超出 x 字
+ * - diff < 0: 少 x 字
  */
 export const CountChip: React.FC<{ count: number; target?: number }> = ({ count, target }) => {
   if (!target || count === 0) return <span className="text-sm font-semibold text-ink-soft">{count} 字</span>;
   const diff = count - target;
   let accent: Accent = 'mint';
-  let text = '字数达标';
+  let text = '';
 
-  if (diff >= 0 && diff <= 80) {
+  if (diff === 0) {
     accent = 'mint';
-    text = '字数达标';
-  } else if (diff >= -20 && diff < 0) {
-    accent = 'mint';
-    text = `基本达标（差 ${-diff} 字）`;
-  } else if (diff > 80 && diff <= 100) {
-    accent = 'sky';
-    text = `略多 ${diff} 字`;
-  } else if (diff > 100) {
-    accent = 'sun';
-    text = `多了 ${diff} 字`;
+    text = `刚好 ${target} 字`;
+  } else if (diff > 0) {
+    accent = diff <= 100 ? 'mint' : 'sun';
+    text = `超出 ${diff} 字`;
   } else {
-    accent = 'coral';
-    text = `还差 ${-diff} 字`;
+    // diff < 0 (少于目标字数)
+    accent = diff >= -30 ? 'sun' : 'coral';
+    text = `少 ${-diff} 字`;
   }
 
   return (
