@@ -1,0 +1,275 @@
+@import "tailwindcss";
+
+/* ───────────────────────────── 设计 Token：清新明亮学习 App 风 ─────────────────────────────
+   低饱和蓝绿为主色，五个模块各有一个柔和的点缀色，用在图标底块、步骤标记、浅色提示块上。
+   所有主操作按钮统一使用 brand-600，保证全站一致、文字对比度充足。 */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans SC", sans-serif;
+  --font-read: "Kaiti SC", "STKaiti", "KaiTi", "Songti SC", "Noto Serif SC", serif;
+
+  --color-canvas: #f3f8f8;
+  --color-surface: #ffffff;
+  --color-line: #dfeaea;
+  --color-line-strong: #c9dcdc;
+  --color-ink: #1f3a40;
+  --color-ink-soft: #52696e;
+  --color-ink-mute: #66797e;
+
+  --color-brand-50: #eef7f8;
+  --color-brand-100: #d9edef;
+  --color-brand-200: #b4dadf;
+  --color-brand-300: #86c2cb;
+  --color-brand-400: #5aa7b4;
+  --color-brand-500: #3d8e9c;
+  --color-brand-600: #2f7482;
+  --color-brand-700: #285d69;
+  --color-brand-800: #234b55;
+  --color-brand-900: #1e3e47;
+
+  /* 想一想 · 暖黄 */
+  --color-sun-50: #fff6e0;
+  --color-sun-100: #ffeabb;
+  --color-sun-200: #fbd88a;
+  --color-sun-500: #f2b23a;
+  --color-sun-700: #8f5d0a;
+  /* 写一写 · 珊瑚 */
+  --color-coral-50: #ffeeea;
+  --color-coral-100: #ffd9d0;
+  --color-coral-200: #fbbcae;
+  --color-coral-500: #ee7a65;
+  --color-coral-700: #a3412f;
+  /* 改一改 · 薄荷 */
+  --color-mint-50: #e6f6ee;
+  --color-mint-100: #c9ecda;
+  --color-mint-200: #a2dcbf;
+  --color-mint-500: #3fae80;
+  --color-mint-700: #1d7250;
+  /* 学一学 · 天蓝 */
+  --color-sky-50: #eaf2fc;
+  --color-sky-100: #d3e3f7;
+  --color-sky-200: #aecbee;
+  --color-sky-500: #5d93d6;
+  --color-sky-700: #2b5b9b;
+  /* 好词好句本 · 葡萄紫 */
+  --color-grape-50: #f0eefc;
+  --color-grape-100: #e0dbf8;
+  --color-grape-200: #c6bef0;
+  --color-grape-500: #8b7bd8;
+  --color-grape-700: #5546a8;
+
+  --shadow-card: 0 1px 2px rgb(31 58 64 / 0.04), 0 6px 18px -8px rgb(31 58 64 / 0.1);
+  --shadow-pop: 0 12px 40px -12px rgb(31 58 64 / 0.28);
+}
+
+@layer base {
+  :root {
+    --target-size: 24px;
+    color-scheme: light;
+  }
+
+  /* 触屏设备的点击目标至少 44px（WCAG 2.5.5），鼠标下 24px */
+  @media (pointer: coarse) {
+    :root {
+      --target-size: 44px;
+    }
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overflow-wrap: anywhere;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p,
+  li {
+    text-wrap: pretty;
+  }
+
+  :where(button, select, textarea, input:not([type="checkbox"], [type="radio"], [type="range"])) {
+    min-block-size: var(--target-size);
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  /* 统一的键盘焦点环：只在键盘操作时出现 */
+  :focus-visible {
+    outline: 3px solid var(--color-brand-400);
+    outline-offset: 2px;
+    border-radius: 0.5rem;
+  }
+
+  ::selection {
+    background-color: var(--color-sun-100);
+    color: #5f3d00;
+  }
+
+  /* 原生弹窗：不要无条件设置 display，否则会覆盖关闭状态 */
+  dialog {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    max-inline-size: 100vw;
+    max-block-size: 100dvh;
+  }
+
+  dialog:modal {
+    overscroll-behavior: contain;
+  }
+
+  dialog::backdrop {
+    background: rgb(31 58 64 / 0.5);
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
+}
+
+/* ───────────────────────────── 阅读与书写区域 ───────────────────────────── */
+
+/* 阅读正文：楷体、宽松行距，像课本 */
+.paper-reading {
+  font-family: var(--font-read);
+  letter-spacing: 0.04em;
+  line-height: 2;
+}
+
+/* 中文作文自然段首行空两格（结合 letter-spacing: 0.04em，2 * 1.04em = 2.08em 恰好与下一行第 3 字左对齐） */
+.paper-reading .essay-paragraph {
+  text-indent: 2.08em;
+}
+
+/* 稿纸：行线随文字一起滚动 */
+.lined-paper {
+  --line-h: 2.25rem;
+  font-family: var(--font-read);
+  letter-spacing: 0.04em;
+  line-height: var(--line-h);
+  background-color: #fffdf7;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--line-h) - 1px),
+    #e8e1cf calc(var(--line-h) - 1px),
+    #e8e1cf var(--line-h)
+  );
+  background-attachment: local;
+  padding-block: 0;
+}
+
+/* 小滚动条（桌面端） */
+.slim-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+
+/* 底部导航避让刘海屏 / Home 条 */
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+}
+
+/* ───────────────────────────── 动效（仅在用户未要求减弱动效时启用） ───────────────────────────── */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes bob {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -4px;
+  }
+}
+
+@keyframes spin-ring {
+  to {
+    rotate: 360deg;
+  }
+}
+
+.caret {
+  display: inline-block;
+  inline-size: 0.15em;
+  block-size: 1.1em;
+  margin-inline-start: 0.1em;
+  vertical-align: text-bottom;
+  background: var(--color-brand-500);
+  border-radius: 1px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .anim-fade-up {
+    animation: fade-up 0.35s ease-out both;
+  }
+
+  .caret {
+    animation: caret-blink 1s steps(2, jump-none) infinite;
+  }
+
+  .mascot-bob {
+    animation: bob 3.2s ease-in-out infinite;
+  }
+
+  .spin-ring {
+    animation: spin-ring 0.9s linear infinite;
+  }
+
+  dialog[open] {
+    animation: fade-up 0.25s ease-out both;
+  }
+}
+
+/* 加载指示：减弱动效时改为静态的“省略号”形态，仍然能表达“进行中” */
+.spin-ring {
+  display: inline-block;
+  inline-size: 1.1em;
+  block-size: 1.1em;
+  border-radius: 9999px;
+  border: 2.5px solid currentColor;
+  border-inline-end-color: transparent;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+}
