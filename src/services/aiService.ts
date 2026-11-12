@@ -15,6 +15,7 @@ import {
   GOLDEN_SENTENCES_SCHEMA,
   IDEA_FEEDBACK_SCHEMA,
   buildCompareMessages,
+  buildCondenseLongEssayMessages,
   buildDiagnoseMessages,
   buildDiagnoseSchema,
   buildExpandShortEssayMessages,
@@ -322,11 +323,12 @@ async function streamTitled(opts: {
   fallbackTitle: string;
   signal?: AbortSignal;
   onText?: TitledHandler;
-  /** 考场字数兜底：若初稿比目标字数少超过 20 字，自动触发一次细节扩充确保字数达标 */
+  /** 考场字数双向守门员：若明显偏短（少于 target-20）自动扩充细节；若明显超长（超出 target+75）自动统筹精炼瘦身 */
   lengthGuard?: {
     profile: GradeProfile;
     genre: string;
     target: number;
+    recentRequest?: string;
   };
 }): Promise<{ title: string; body: string }> {
   const raw = await chatStream({
@@ -342,7 +344,7 @@ async function streamTitled(opts: {
   const firstTitle = first.title || opts.fallbackTitle;
   const firstCount = countChars(first.body);
 
-  // 如果开启了考场字数保障，且生成字数比目标少超过 20 字（如目标 450 字却只写了 370 字），自动补充细节使字数达标
+  // 1. 下限保障：如果生成字数比目标少超过 20 字（如目标 450 字却只写了 370 字），自动补充细节使字数达标
   if (opts.lengthGuard && firstCount >= 80 && firstCount < opts.lengthGuard.target - 20) {
     const expandMessages = buildExpandShortEssayMessages({
       profile: opts.lengthGuard.profile,
@@ -353,16 +355,41 @@ async function streamTitled(opts: {
     });
     const expandedRaw = await chatStream({
       messages: expandMessages,
-      maxTokens: tokensForChars(opts.lengthGuard.target + 80),
+      maxTokens: tokensForChars(opts.lengthGuard.target + 65),
       signal: opts.signal,
       onText: (acc) => {
         const { title, body } = parseTitledEssay(acc);
-        // 当扩充稿字数开始推进或正在重写时实时更新界面
         if (body) opts.onText?.(title || firstTitle, body);
       },
     });
     const second = parseTitledEssay(expandedRaw);
     if (countChars(second.body) >= firstCount) {
+      return { title: second.title || firstTitle, body: second.body };
+    }
+  }
+
+  // 2. 上限保障：如果连续修改或生成后字数明显超标（超过 target + 75 字），自动对全篇做统筹精炼瘦身，收敛回合理区间
+  if (opts.lengthGuard && firstCount > opts.lengthGuard.target + 75) {
+    const condenseMessages = buildCondenseLongEssayMessages({
+      profile: opts.lengthGuard.profile,
+      genre: opts.lengthGuard.genre,
+      title: firstTitle,
+      essay: first.body,
+      target: opts.lengthGuard.target,
+      recentRequest: opts.lengthGuard.recentRequest,
+    });
+    const condensedRaw = await chatStream({
+      messages: condenseMessages,
+      maxTokens: tokensForChars(opts.lengthGuard.target + 60),
+      signal: opts.signal,
+      onText: (acc) => {
+        const { title, body } = parseTitledEssay(acc);
+        if (body) opts.onText?.(title || firstTitle, body);
+      },
+    });
+    const second = parseTitledEssay(condensedRaw);
+    const secondCount = countChars(second.body);
+    if (secondCount >= opts.lengthGuard.target - 20 && secondCount < firstCount) {
       return { title: second.title || firstTitle, body: second.body };
     }
   }
@@ -377,7 +404,7 @@ export function generateSampleEssay(
 ) {
   return streamTitled({
     messages: buildSampleEssayMessages(p),
-    maxTokens: tokensForChars(p.wordCount + 80),
+    maxTokens: tokensForChars(p.wordCount + 65),
     fallbackTitle: p.title,
     signal: p.signal,
     onText: p.onText,
@@ -386,16 +413,23 @@ export function generateSampleEssay(
 }
 
 export function reviseEssay(
-  p: Ctx & { title: string; essay: string; request: string; wordCount?: number; onText: TitledHandler }
+  p: Ctx & {
+    title: string;
+    essay: string;
+    request: string;
+    wordCount?: number;
+    previousRequests?: string[];
+    onText: TitledHandler;
+  }
 ) {
   const target = p.wordCount ?? p.profile.defaultWordCount;
   return streamTitled({
     messages: buildReviseMessages(p),
-    maxTokens: tokensForChars(target + 80),
+    maxTokens: tokensForChars(target + 60),
     fallbackTitle: p.title,
     signal: p.signal,
     onText: p.onText,
-    lengthGuard: { profile: p.profile, genre: p.genre, target },
+    lengthGuard: { profile: p.profile, genre: p.genre, target, recentRequest: p.request },
   });
 }
 
@@ -902,39 +936,48 @@ const REVISE_SUGGESTIONS_SCHEMA = {
 };
 
 /**
- * 根据当前作文正文、修改历史与体裁，由 AI 动态生成针对这篇作文的专属修改建议短语
+ * 根据当前作文正文、篇幅状态、修改历史与体裁，由 AI 动态生成针对这篇作文的专属修改建议短语
  */
 export async function generateReviseSuggestions(params: {
   title: string;
   content: string;
   genre: string;
   stage: string;
+  targetWords?: number;
   recentChatSummary?: string;
   signal?: AbortSignal;
 }): Promise<string[]> {
-  const { title, content, genre, stage, recentChatSummary, signal } = params;
+  const { title, content, genre, stage, targetWords, recentChatSummary, signal } = params;
   if (!content.trim() && !title.trim()) {
     return getContextualFallbackSuggestions(title, genre, stage);
   }
 
-  const excerpt = content.slice(0, 600);
+  const currentChars = countChars(content);
+  const isOverLength = Boolean(targetWords && currentChars > targetWords + 50);
+  const lengthContext = targetWords
+    ? isOverLength
+      ? `⚠️【篇幅超标提醒】：当前文章已有 ${currentChars} 字，超出目标字数（${targetWords} 字）${currentChars - targetWords} 字！请务必在 4 个建议中提供至少 2 个“精简次要铺垫/浓缩冗余句子”的方向（如“精简开头铺垫直奔高潮”、“浓缩过渡段让节奏更紧凑”），其余建议也请采用“把...改写为...”的替换精修方式，切勿再诱导一味加字扩写！`
+      : `当前字数：${currentChars} 字（目标 ${targetWords} 字）。建议应兼顾“细节替换打磨”与“详略精炼”，不要一味只做加法。`
+    : '';
+
+  const excerpt = content.slice(0, 650);
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      content: `你是一位专业的中小学语文特级名师。请根据学生当前的作文题目、体裁与具体段落，为学生量身生成 4 个非常具体、有针对性、富有启发性的下一步修改建议短语。
+      content: `你是一位专业的中小学语文特级名师。请整体把握学生当前的作文题目、体裁、总篇幅与具体段落，为学生量身生成 4 个非常具体、有针对性、富有启发性的下一步修改建议短语。
 要求：
-1. 必须紧密贴合这篇作文的具体情节、事物、感官或细节（例如题目为《金秋的豌豆黄》，建议应是“细写豌豆黄香甜细腻的口感”、“加入胡同叫卖的老北京吆喝声”等具体构思，绝不能用通用的空话套话）。
-2. 每个建议必须以动词开头（如“细写...”、“加入...”、“刻画...”、“突出...”、“结尾升华...”），字数严格控制在 6~12 个字以内。
+1. 必须紧密贴合这篇作文的具体情节、事物或段落（例如《金秋的豌豆黄》可建议“把品尝豌豆黄改写得更细腻”，《运动会接力赛》可建议“精简赛前铺垫突出交接棒瞬间”，绝不能用通用空话套话）。
+2. 兼顾“精修替换”与“详略裁剪”：引导学生在保持全篇合理字数的前提下打磨文章（多用“把...改写得...”、“精简...突出...”、“将...替换为...”、“提炼...”等动词开头），字数严格控制在 6~13 个字以内。
 3. 请以规范 JSON 输出包含 suggestions 字段的对象。`,
     },
     {
       role: 'user',
       content: `作文题目：《${title || '未命名'}》
 体裁：${genre}
-${recentChatSummary ? `最近已修改过的方向：${recentChatSummary}\n` : ''}文章片段：
+${lengthContext ? `${lengthContext}\n` : ''}${recentChatSummary ? `最近已修改过的方向（请勿重复）：${recentChatSummary}\n` : ''}文章片段：
 ${excerpt}
 
-请针对这篇文章，给出 4 个最具针对性、最值得学生继续修改的具体灵感短语：`,
+请针对这篇文章，给出 4 个最具针对性、兼顾详略与篇幅平衡的具体修改灵感短语：`,
     },
   ];
 

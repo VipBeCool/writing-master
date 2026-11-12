@@ -120,6 +120,7 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
         content: targetContent,
         genre,
         stage: profile.stage,
+        targetWords: wordCount,
         recentChatSummary: recentRequest,
       });
       if (res && res.length >= 2) {
@@ -204,6 +205,10 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
 
     const previous = essay;
     const previousTitle = title;
+    const previousRequests = versions
+      .slice(0, activeVersionIdx + 1)
+      .map((v) => v.request)
+      .filter((r): r is string => Boolean(r));
     setRevising(true);
     try {
       const res = await reviseEssay({
@@ -212,6 +217,7 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
         essay: previous,
         request,
         wordCount,
+        previousRequests,
         onText: (t, body) => {
           if (t) setTitle(t);
           setEssay(body);
@@ -241,8 +247,9 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
           text: `好的，按“${request}”改好了！你可以在左边顶部随时切换查看不同版本对比，还想改哪里？`,
         },
       ]);
-      // 结合本次修改指令和最新内容，动态刷新下一步修改建议
-      refreshSuggestions(finalTitle, finalBody, request);
+      // 结合全部历史修改指令和最新内容，动态刷新下一步修改建议
+      const allReqs = [...previousRequests, request].join('；');
+      refreshSuggestions(finalTitle, finalBody, allReqs);
     } catch (e: any) {
       setEssay(previous); // 失败时恢复原文
       setTitle(previousTitle);

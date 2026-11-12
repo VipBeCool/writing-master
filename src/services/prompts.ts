@@ -76,7 +76,7 @@ export function buildVars(profile: GradeProfile, genre: string, wordCount?: numb
     topicStyle: STAGE_TOPIC_STYLE[profile.stage],
     wordCount: String(wc),
     minWords: String(wc),
-    maxWords: String(wc + 80),
+    maxWords: String(wc + 60),
     rubric: rubricText(profile.rubric),
     scoreTotal: String(total),
     typicalScore: `${Math.round(total * 0.6)}~${Math.round(total * 0.76)}`,
@@ -132,29 +132,43 @@ export function buildReviseMessages(p: Base & {
   essay: string;
   request: string;
   wordCount?: number;
+  previousRequests?: string[];
 }): ChatMessage[] {
   const target = p.wordCount ?? p.profile.defaultWordCount;
   const minW = target;
-  const maxW = target + 80;
+  const maxW = target + 60;
   const currentChars = countChars(p.essay);
+  const trimAmount = Math.max(30, currentChars - (target + 30));
+
   const lengthNote =
-    currentChars > maxW + 10
-      ? `注意：当前文章已有 ${currentChars} 字，超出了${p.profile.name}考场合理篇幅上限（标准 ${target} 字，上限 ${maxW} 字）。本次修改时请务必一并精简冗余词句，将修改后的全文总字数收敛回 ${minW}~${maxW} 字之间！`
+    currentChars > maxW
+      ? `⚠️【全局篇幅瘦身指令】：当前文章已有 ${currentChars} 字，超出目标篇幅（标准 ${target} 字，上限 ${maxW} 字）${currentChars - target} 字！
+本次是连续修改，严禁再单纯往原文里塞字累加！请执行【融入新要求 + 全局精简瘦身】策略：
+1. 先将学生的修改意见“${p.request}”自然融入对应位置；
+2. 同步统筹全篇，果断删减、合并其他段落中铺垫过长、重复啰嗦或平淡的过渡词句，累计精简掉约 ${trimAmount} 字，使修改后的全文总字数严格回落到 ${minW}~${maxW} 字之间！`
       : currentChars < minW - 20
-      ? `注意：当前文章只有 ${currentChars} 字，比${p.profile.name}考试要求（不少于 ${minW} 字）还差 ${minW - currentChars} 字！本次修改时请一并充实中间段落的细节描写，使修改后的全文总字数达到 ${minW}~${maxW} 字！`
-      : `注意：当前文章 ${currentChars} 字，${p.profile.name}考试要求不少于 ${minW} 字（理想篇幅 ${minW}~${maxW} 字）。修改后请确保全文总字数保持在 ${minW}~${maxW} 字之间（既不能少于 ${minW - 15} 字，也不要超出 ${maxW} 字）！`;
+      ? `📈【篇幅充实指令】：当前文章只有 ${currentChars} 字，比${p.profile.name}要求（不少于 ${minW} 字）还差 ${minW - currentChars} 字！本次修改时请结合“${p.request}”一并充实重点段落细节，使修改后的全文总字数达到 ${minW}~${maxW} 字！`
+      : `⚖️【全局篇幅守恒指令】：当前文章 ${currentChars} 字，正处于理想篇幅区间（${minW}~${maxW} 字）。
+请严格执行【有增必有减 · 等量替换】原则：在落实“${p.request}”时，若在某一段新增了 30~50 字的细节描写，请务必同步精炼压缩其他次要段落中 30~50 字的平淡叙述，用“替换升级”代替“单纯累加”，确保修改后的全文总字数依然稳定在 ${minW}~${maxW} 字之间，绝不越改越长！`;
+
+  const historyBlock =
+    p.previousRequests && p.previousRequests.length > 0
+      ? `\n【前序已完成的修改脉络（请保留其核心神韵，并做好全篇详略统筹，切勿在同一处反复堆砌）】\n${p.previousRequests
+          .map((r, i) => `第 ${i + 1} 轮已改：${r}`)
+          .join('\n')}\n`
+      : '';
 
   return pair(
     renderTask('reviseEssay', p.profile, p.genre, target),
-    `【当前作文（${p.profile.name} · 当前 ${currentChars} 字 · 考场目标 ${minW}~${maxW} 字）】
+    `【当前作文（${p.profile.name} · 当前 ${currentChars} 字 · 黄金目标篇幅 ${minW}~${maxW} 字）】
 标题：${p.title}
 
 ${p.essay}
-
-【学生的修改要求】
+${historyBlock}
+【学生本轮的修改要求】
 ${p.request}
 
-【篇幅硬性约束】
+【全局篇幅与详略硬性约束】
 ${lengthNote}`
   );
 }
@@ -378,14 +392,46 @@ export function buildExpandShortEssayMessages(p: {
   const current = countChars(p.essay);
   const diff = p.target - current;
   const minW = p.target;
-  const maxW = p.target + 75;
+  const maxW = p.target + 60;
   return pair(
     renderTask('persona', p.profile, p.genre, p.target),
     `下面这篇${p.profile.name}《${p.title}》（${p.genre}）目前只有 ${current} 字，比考试要求的 ${minW} 字还差 ${diff} 字，在考场上会被扣字数分！
-请你在【完全保留原有立意、故事脉络和开头结尾】的基础上，把中间段落的场景、人物动作、语言对话、神态或心理细节进一步展开写饱满，再自然扩充约 ${diff + 20}~${diff + 55} 字，使最终全文正文字数达到 ${minW}~${maxW} 字之间（但切勿超过 ${p.target + 85} 字）。
+请你在【完全保留原有立意、故事脉络和开头结尾】的基础上，把中间段落的场景、人物动作、语言对话、神态或心理细节进一步展开写饱满，再自然扩充约 ${diff + 15}~${diff + 45} 字，使最终全文正文字数达到 ${minW}~${maxW} 字之间（但切勿超过 ${p.target + 70} 字）。
 只输出扩充后的完整作文（第一行“标题：${p.title}”，空一行后输出完整正文），不要任何解释或说明。
 
 【当前偏短的初稿（${current} 字）】
+标题：${p.title}
+
+${p.essay}`
+  );
+}
+
+/**
+ * 当模型生成或多次修改后的作文字数明显超标（超过 target + 75 字）时，
+ * 自动统筹全篇进行精炼瘦身，保留核心亮点与刚修改的细节，将总字数收敛回 target ~ target + 60 字。
+ */
+export function buildCondenseLongEssayMessages(p: {
+  profile: GradeProfile;
+  genre: string;
+  title: string;
+  essay: string;
+  target: number;
+  recentRequest?: string;
+}): ChatMessage[] {
+  const current = countChars(p.essay);
+  const minW = p.target;
+  const maxW = p.target + 60;
+  const excess = Math.max(30, current - (p.target + 35));
+  return pair(
+    renderTask('persona', p.profile, p.genre, p.target),
+    `下面这篇${p.profile.name}《${p.title}》（${p.genre}）经过修改后目前有 ${current} 字，超出了目标篇幅（标准 ${p.target} 字，理想区间 ${minW}~${maxW} 字）！
+请你在【完全保留文章核心立意、精彩好句${p.recentRequest ? `以及刚刚按“${p.recentRequest}”修改的亮点细节` : ''}】的前提下，对全篇进行整体统筹与精炼瘦身：
+1. 果断删减次要段落中啰嗦的铺垫、重复的形容词和多余的过渡句，把全文精简掉约 ${excess} 字；
+2. 保持原有的自然段结构（${p.profile.paragraphHint}），做到重点突出、详略得当、行文紧凑；
+3. 使精炼后的全文正文字数严格收敛在 ${minW}~${maxW} 字之间（但不要少于 ${minW} 字）！
+只输出精炼后的完整作文（第一行“标题：${p.title}”，空一行后输出完整正文），不要任何解释或说明。
+
+【当前偏长的文稿（${current} 字 -> 请精炼至 ${minW}~${maxW} 字）】
 标题：${p.title}
 
 ${p.essay}`
