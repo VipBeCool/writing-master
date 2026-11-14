@@ -3,7 +3,7 @@
  * 支持从 GitHub Releases 检查最新版本、获取更新日志，并在客户端内展示或一键更新
  */
 
-export const APP_VERSION = '1.0.2';
+export const APP_VERSION = '1.0.3';
 export const GITHUB_REPO = 'VipBeCool/writing-master';
 
 export interface UpdateInfo {
@@ -115,26 +115,42 @@ export function openExternalUrl(url: string) {
 
 /** 检查 GitHub Releases 是否有新版本 */
 export async function checkForAppUpdates(): Promise<UpdateInfo> {
+  const headers = {
+    Accept: 'application/vnd.github.v3+json',
+  };
   const url = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
   const res = await fetch(url, {
-    headers: {
-      Accept: 'application/vnd.github.v3+json',
-    },
+    headers,
     signal: AbortSignal.timeout(6000),
   });
 
   if (!res.ok) {
     if (res.status === 404) {
-      // 仓库尚未发布任何 release
-      return {
-        hasUpdate: false,
-        currentVersion: APP_VERSION,
-        latestVersion: APP_VERSION,
-        releaseName: '当前已是最新版',
-        releaseNotes: '暂无更新记录。',
-        publishedAt: '',
-        htmlUrl: `https://github.com/${GITHUB_REPO}/releases`,
-      };
+      // 区分“公开仓库尚未发布任何 Release”与“私有仓库 (Private) 对匿名客户端返回 404”
+      const repoRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}`, {
+        headers,
+        signal: AbortSignal.timeout(6000),
+      }).catch(() => null);
+
+      if (repoRes?.ok) {
+        return {
+          hasUpdate: false,
+          currentVersion: APP_VERSION,
+          latestVersion: APP_VERSION,
+          releaseName: '当前已是最新版',
+          releaseNotes: '暂无更新记录。',
+          publishedAt: '',
+          htmlUrl: `https://github.com/${GITHUB_REPO}/releases`,
+        };
+      }
+
+      if (repoRes?.status === 403) {
+        throw new Error('GitHub API 请求频率受限 (HTTP 403)，请稍后再试或前往 GitHub Releases 查看。');
+      }
+
+      throw new Error(
+        `无法读取 GitHub 更新信息 (HTTP 404)：仓库「${GITHUB_REPO}」当前可能为私有仓库 (Private) 或不可访问，客户端无法免登录检测和下载更新。请将仓库设为 Public，或手动下载安装包升级。`
+      );
     }
     throw new Error(`无法连接到更新服务器 (HTTP ${res.status})`);
   }

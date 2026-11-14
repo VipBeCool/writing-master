@@ -68,10 +68,13 @@ interface IdeaTrainerProps {
   onGoWrite: (note: IdeaNote) => void;
 }
 
-/** 把“【心理】：问题”拆成标签和正文 */
+/** 把“【心理】：问题”拆成标签和正文（兼容流式输出未闭合括号） */
 const splitQuestion = (q: string) => {
   const m = q.match(/^【(.+?)】[：:]?\s*([\s\S]*)$/);
-  return m ? { tag: m[1], text: m[2] } : { tag: '', text: q };
+  if (m) return { tag: m[1], text: m[2] };
+  const partial = q.match(/^【([^】]*)$/);
+  if (partial) return { tag: partial[1], text: '' };
+  return { tag: '', text: q };
 };
 
 type Stage = 'idle' | 'coaching' | 'writing' | 'picking';
@@ -193,24 +196,55 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
     setSaved({});
     setStage('coaching');
     const ctx = { profile, genre };
-    try {
-      // 第 1 步：先夸，再追问（苏格拉底式点拨；若想法留空，AI将自主构思）
-      const { feedback, structure } = await coachIdea({ ...ctx, topic: topic.trim(), outline });
-      setSession({
-        id: `idea-${Date.now()}`,
-        topic: topic.trim(),
+    const sessionId = `idea-${Date.now()}`;
+    const createdAt = new Date().toLocaleString('zh-CN');
+    const trimmedTopic = topic.trim();
+    const outlineSummary = outline.trim() || '（由小导师自主构思）';
+
+    const upsertCoaching = (
+      feedback: IdeaTrainingSession['aiFeedback'],
+      structure: IdeaTrainingSession['generatedDraft']['structure']
+    ) => {
+      setSession((prev) => ({
+        id: prev?.id ?? sessionId,
+        topic: trimmedTopic,
         topicCategory: genre,
-        userOutlineVoiceText: outline.trim() || '（由小导师自主构思）',
+        userOutlineVoiceText: outlineSummary,
         aiFeedback: feedback,
-        generatedDraft: { title: topic.trim(), content: '', wordCount: 0, structure, goldenSentences: [] },
-        createdAt: new Date().toLocaleString('zh-CN'),
+        generatedDraft: {
+          title: prev?.generatedDraft.title || trimmedTopic,
+          content: prev?.generatedDraft.content || '',
+          wordCount: prev?.generatedDraft.wordCount || 0,
+          structure,
+          goldenSentences: prev?.generatedDraft.goldenSentences || [],
+        },
+        createdAt: prev?.createdAt ?? createdAt,
+      }));
+    };
+
+    try {
+      // 第 1 步：流式输出夸奖、追问和提分点拨，让用户在“听你说”阶段第一时间看到反馈
+      const { feedback, structure } = await coachIdea({
+        ...ctx,
+        topic: trimmedTopic,
+        outline,
+        onProgress: ({ feedback: partialFeedback, structure: partialStructure }) => {
+          if (
+            partialFeedback.praise ||
+            partialFeedback.scaffoldingQuestions.length > 0 ||
+            partialFeedback.keyTips
+          ) {
+            upsertCoaching(partialFeedback, partialStructure);
+          }
+        },
       });
+      upsertCoaching(feedback, structure);
 
       // 第 2 步：结合学生自己的想法，流式写示范成文
       setStage('writing');
       const draft = await writeIdeaDraft({
         ...ctx,
-        topic: topic.trim(),
+        topic: trimmedTopic,
         outline,
         questions: feedback.scaffoldingQuestions,
         onText: (title, body) =>
@@ -247,8 +281,12 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
     setSaved((p) => ({ ...p, [sentence]: true }));
   };
 
-  const trackerCurrent = stage === 'coaching' ? 0 : stage === 'writing' ? 1 : stage === 'picking' ? 2 : session ? 3 : -1;
+  const trackerCurrent =
+    stage === 'coaching' ? 0 : stage === 'writing' ? 1 : stage === 'picking' ? 2 : session?.generatedDraft.content ? 3 : -1;
   const draft = session?.generatedDraft;
+  const visibleQuestions = session?.aiFeedback.scaffoldingQuestions.filter((q) => q.trim().length > 0) ?? [];
+  const showQuestionsCard = visibleQuestions.length > 0 || Boolean(session?.aiFeedback.keyTips);
+  const showDraftCard = Boolean(draft) && (stage === 'writing' || stage === 'picking' || Boolean(draft?.content));
 
   return (
     <div className="space-y-6">
@@ -456,45 +494,77 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
             </Card>
           )}
 
+          {stage === 'coaching' && !session && (
+            <Card className="anim-fade-up flex items-center gap-3 text-base text-ink-soft">
+              <span className="inline-block size-2.5 animate-pulse rounded-full bg-sun-500" aria-hidden="true" />
+              小导师正在认真听你的想法，马上就好…
+            </Card>
+          )}
+
           {session && (
             <>
               <section className="anim-fade-up space-y-4">
-                <SpeechBubble mood="cheer" title="小导师夸夸你" accent="sun">
-                  <div className="text-justify-zh">{session.aiFeedback.praise}</div>
-                </SpeechBubble>
+                {session.aiFeedback.praise && (
+                  <SpeechBubble mood="cheer" title="小导师夸夸你" accent="sun">
+                    <div className="text-justify-zh">
+                      {session.aiFeedback.praise}
+                      {stage === 'coaching' && !showQuestionsCard && (
+                        <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-sun-600 align-text-bottom" aria-hidden="true" />
+                      )}
+                    </div>
+                  </SpeechBubble>
+                )}
 
-                <Card className="space-y-4">
-                  <h2 className="flex items-center gap-2 text-lg font-extrabold text-ink">
-                    <Lightbulb className="size-5 text-sun-700" aria-hidden="true" />
-                    再想想这几个问题，作文会更生动
-                  </h2>
-                  <ol className="space-y-3">
-                    {session.aiFeedback.scaffoldingQuestions.map((q, i) => {
-                      const { tag, text } = splitQuestion(q);
-                      return (
-                        <li key={i} className="flex items-start gap-3 rounded-2xl bg-sun-50 p-4">
-                          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-sun-200 text-base font-extrabold text-sun-700">
-                            {i + 1}
-                          </span>
-                          <div className="min-w-0 space-y-1">
-                            {tag && <Badge accent="sun">{tag}</Badge>}
-                            <p className="text-justify-zh text-base leading-relaxed text-ink">{text}</p>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ol>
-                  <p className="flex items-start gap-2 rounded-2xl bg-canvas px-4 py-3 text-base text-ink-soft">
-                    <Sparkles className="mt-0.5 size-5 shrink-0 text-brand-600" aria-hidden="true" />
-                    <span className="text-justify-zh">
-                      <strong className="text-ink">提分点拨：</strong>
-                      {session.aiFeedback.keyTips}
-                    </span>
-                  </p>
-                </Card>
+                {showQuestionsCard && (
+                  <Card className="space-y-4">
+                    <h2 className="flex items-center gap-2 text-lg font-extrabold text-ink">
+                      <Lightbulb className="size-5 text-sun-700" aria-hidden="true" />
+                      再想想这几个问题，作文会更生动
+                    </h2>
+                    {visibleQuestions.length > 0 && (
+                      <ol className="space-y-3">
+                        {visibleQuestions.map((q, i) => {
+                          const { tag, text } = splitQuestion(q);
+                          const isStreamingThis =
+                            stage === 'coaching' && !session.aiFeedback.keyTips && i === visibleQuestions.length - 1;
+                          return (
+                            <li key={i} className="flex items-start gap-3 rounded-2xl bg-sun-50 p-4">
+                              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-sun-200 text-base font-extrabold text-sun-700">
+                                {i + 1}
+                              </span>
+                              <div className="min-w-0 space-y-1">
+                                {tag && <Badge accent="sun">{tag}</Badge>}
+                                {(text || isStreamingThis) && (
+                                  <p className="text-justify-zh text-base leading-relaxed text-ink">
+                                    {text}
+                                    {isStreamingThis && (
+                                      <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-sun-600 align-text-bottom" aria-hidden="true" />
+                                    )}
+                                  </p>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    )}
+                    {session.aiFeedback.keyTips && (
+                      <p className="flex items-start gap-2 rounded-2xl bg-canvas px-4 py-3 text-base text-ink-soft">
+                        <Sparkles className="mt-0.5 size-5 shrink-0 text-brand-600" aria-hidden="true" />
+                        <span className="text-justify-zh">
+                          <strong className="text-ink">提分点拨：</strong>
+                          {session.aiFeedback.keyTips}
+                          {stage === 'coaching' && !draft?.structure.beginning && (
+                            <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-brand-600 align-text-bottom" aria-hidden="true" />
+                          )}
+                        </span>
+                      </p>
+                    )}
+                  </Card>
+                )}
               </section>
 
-              {draft && (
+              {showDraftCard && draft && (
                 <Card as="article" className="anim-fade-up space-y-5">
                   <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-4">
                     <div className="min-w-0">

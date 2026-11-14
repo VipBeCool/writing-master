@@ -783,6 +783,7 @@ const AboutTab: React.FC = () => {
 
   const handleCheck = async () => {
     setChecking(true);
+    setHasChecked(false);
     setError(null);
     setUpdateActionError(null);
     try {

@@ -138,27 +138,8 @@ async function post(
   return res;
 }
 
-/** 流式生成纯文本（打字机效果）。onText 每收到一段就回调累计文本 */
-export async function chatStream(opts: {
-  messages: ChatMessage[];
-  maxTokens: number;
-  temperature?: number;
-  signal?: AbortSignal;
-  onText?: (accumulated: string) => void;
-}): Promise<string> {
-  const res = await post(
-    {
-      messages: opts.messages,
-      stream: true,
-      max_tokens: opts.maxTokens,
-      temperature: opts.temperature ?? 0.7,
-      top_p: 0.8,
-      top_k: 20,
-      presence_penalty: 1.0,
-    },
-    opts.signal
-  );
-
+/** 读取 OpenAI SSE 流，逐片通过 onText 回调累计文本 */
+async function readSSEStream(res: Response, onText?: (accumulated: string) => void): Promise<string> {
   if (!res.body) throw new LLMError('当前环境不支持流式读取响应');
 
   const reader = res.body.getReader();
@@ -183,7 +164,7 @@ export async function chatStream(opts: {
           const delta = JSON.parse(data)?.choices?.[0]?.delta?.content;
           if (delta) {
             accumulated += delta;
-            opts.onText?.(accumulated);
+            onText?.(accumulated);
           }
         } catch {
           // 忽略非 JSON 的心跳帧
@@ -195,6 +176,209 @@ export async function chatStream(opts: {
   }
 
   return accumulated;
+}
+
+/** 宽容解析完整 JSON 响应（带首尾大括号兜底） */
+function parseFinalJSON<T>(content: string): T {
+  try {
+    return JSON.parse(content) as T;
+  } catch {
+    const start = content.indexOf('{');
+    const end = content.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(content.slice(start, end + 1)) as T;
+      } catch {
+        // fallthrough
+      }
+    }
+    throw new LLMError('AI 返回的内容格式不对（可能被截断了），请再试一次。');
+  }
+}
+
+/** 从尚未传输完的流式 JSON 文本中提取已出现的字段，实现结构化内容边生成边展示 */
+function parsePartialJsonObject(input: string): Record<string, unknown> {
+  const start = input.indexOf('{');
+  if (start < 0) return {};
+  let i = start;
+  const len = input.length;
+
+  const skipWs = () => {
+    while (i < len && /\s/.test(input[i])) i++;
+  };
+
+  const readString = (): { value: string; complete: boolean } => {
+    i++; // skip opening "
+    let out = '';
+    while (i < len) {
+      const ch = input[i];
+      if (ch === '"') {
+        i++;
+        return { value: out, complete: true };
+      }
+      if (ch === '\\') {
+        if (i + 1 >= len) {
+          i = len;
+          return { value: out, complete: false };
+        }
+        const esc = input[i + 1];
+        if (esc === 'n') { out += '\n'; i += 2; }
+        else if (esc === 'r') { out += '\r'; i += 2; }
+        else if (esc === 't') { out += '\t'; i += 2; }
+        else if (esc === '"' || esc === '\\' || esc === '/') { out += esc; i += 2; }
+        else if (esc === 'b') { out += '\b'; i += 2; }
+        else if (esc === 'f') { out += '\f'; i += 2; }
+        else if (esc === 'u') {
+          if (i + 6 > len) {
+            i = len;
+            return { value: out, complete: false };
+          }
+          const hex = input.slice(i + 2, i + 6);
+          const code = parseInt(hex, 16);
+          out += Number.isNaN(code) ? input.slice(i, i + 6) : String.fromCharCode(code);
+          i += 6;
+        } else {
+          out += esc;
+          i += 2;
+        }
+      } else {
+        out += ch;
+        i++;
+      }
+    }
+    return { value: out, complete: false };
+  };
+
+  const readValue = (): unknown => {
+    skipWs();
+    if (i >= len) return undefined;
+    const ch = input[i];
+    if (ch === '"') return readString().value;
+    if (ch === '{') return readObject();
+    if (ch === '[') return readArray();
+    if (input.startsWith('true', i)) { i += 4; return true; }
+    if (input.startsWith('false', i)) { i += 5; return false; }
+    if (input.startsWith('null', i)) { i += 4; return null; }
+    const m = input.slice(i).match(/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+    if (m) {
+      i += m[0].length;
+      return Number(m[0]);
+    }
+    return undefined;
+  };
+
+  const readArray = (): unknown[] => {
+    i++; // skip [
+    const arr: unknown[] = [];
+    while (i < len) {
+      skipWs();
+      if (i >= len) break;
+      if (input[i] === ']') { i++; break; }
+      const v = readValue();
+      if (v !== undefined) arr.push(v);
+      else break;
+      skipWs();
+      if (i < len && input[i] === ',') i++;
+      else if (i < len && input[i] === ']') { i++; break; }
+      else break;
+    }
+    return arr;
+  };
+
+  const readObject = (): Record<string, unknown> => {
+    i++; // skip {
+    const obj: Record<string, unknown> = {};
+    while (i < len) {
+      skipWs();
+      if (i >= len) break;
+      if (input[i] === '}') { i++; break; }
+      if (input[i] !== '"') break;
+      const key = readString();
+      if (!key.complete) break;
+      skipWs();
+      if (i >= len || input[i] !== ':') break;
+      i++; // skip :
+      const val = readValue();
+      if (val !== undefined) obj[key.value] = val;
+      else break;
+      skipWs();
+      if (i < len && input[i] === ',') i++;
+      else if (i < len && input[i] === '}') { i++; break; }
+      else break;
+    }
+    return obj;
+  };
+
+  return readObject();
+}
+
+/** 流式生成纯文本（打字机效果）。onText 每收到一段就回调累计文本 */
+export async function chatStream(opts: {
+  messages: ChatMessage[];
+  maxTokens: number;
+  temperature?: number;
+  signal?: AbortSignal;
+  onText?: (accumulated: string) => void;
+}): Promise<string> {
+  const res = await post(
+    {
+      messages: opts.messages,
+      stream: true,
+      max_tokens: opts.maxTokens,
+      temperature: opts.temperature ?? 0.7,
+      top_p: 0.8,
+      top_k: 20,
+      presence_penalty: 1.0,
+    },
+    opts.signal
+  );
+
+  return readSSEStream(res, opts.onText);
+}
+
+/** 流式生成结构化 JSON：在生成过程中持续解析已到达字段，结束时返回完整对象 */
+export async function chatStreamJSON<T>(opts: {
+  messages: ChatMessage[];
+  schema: object;
+  maxTokens: number;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  endpoint?: EndpointKind;
+  signal?: AbortSignal;
+  onPartial?: (partial: Record<string, unknown>) => void;
+}): Promise<T> {
+  const res = await post(
+    {
+      messages: opts.messages,
+      stream: true,
+      max_tokens: opts.maxTokens,
+      temperature: opts.temperature ?? 0.3,
+      top_p: opts.topP ?? 0.85,
+      top_k: opts.topK ?? 30,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'result', strict: true, schema: opts.schema },
+      },
+    },
+    opts.signal,
+    opts.endpoint ?? 'main'
+  );
+
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!contentType.includes('text/event-stream') && contentType.includes('application/json')) {
+    const data = await res.json();
+    const content: string = data?.choices?.[0]?.message?.content ?? '';
+    if (content) opts.onPartial?.(parsePartialJsonObject(content));
+    return parseFinalJSON<T>(content);
+  }
+
+  const content = await readSSEStream(res, (acc) => {
+    if (opts.onPartial) {
+      opts.onPartial(parsePartialJsonObject(acc));
+    }
+  });
+  return parseFinalJSON<T>(content);
 }
 
 /** 生成结构化 JSON（用 JSON Schema 约束输出，保证字段齐全、格式合法） */
@@ -227,21 +411,7 @@ export async function chatJSON<T>(opts: {
 
   const data = await res.json();
   const content: string = data?.choices?.[0]?.message?.content ?? '';
-  try {
-    return JSON.parse(content) as T;
-  } catch {
-    // 兜底：截取第一个 { 到最后一个 }
-    const start = content.indexOf('{');
-    const end = content.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(content.slice(start, end + 1)) as T;
-      } catch {
-        // fallthrough
-      }
-    }
-    throw new LLMError('AI 返回的内容格式不对（可能被截断了），请再试一次。');
-  }
+  return parseFinalJSON<T>(content);
 }
 
 export interface RemoteModelInfo {
@@ -679,19 +849,42 @@ export async function drawBlindBoxTopic(opts: {
   return { card: locked && genre ? { ...card, genre } : card, source: 'ai' };
 }
 
+/** 规范化流式/完整的思路点拨数据 */
+function normalizeCoachResult(
+  raw: Record<string, unknown> | (IdeaFeedback & { structure: IdeaStructure })
+): { feedback: IdeaFeedback; structure: IdeaStructure } {
+  const r = raw as Partial<IdeaFeedback & { structure: Partial<IdeaStructure> }>;
+  return {
+    feedback: {
+      praise: typeof r.praise === 'string' ? r.praise : '',
+      scaffoldingQuestions: Array.isArray(r.scaffoldingQuestions)
+        ? r.scaffoldingQuestions.filter((q): q is string => typeof q === 'string')
+        : [],
+      keyTips: typeof r.keyTips === 'string' ? r.keyTips : '',
+    },
+    structure: {
+      beginning: typeof r.structure?.beginning === 'string' ? r.structure.beginning : '',
+      body: typeof r.structure?.body === 'string' ? r.structure.body : '',
+      ending: typeof r.structure?.ending === 'string' ? r.structure.ending : '',
+    },
+  };
+}
+
 export async function coachIdea(
-  p: Ctx & { topic: string; outline: string }
+  p: Ctx & {
+    topic: string;
+    outline: string;
+    onProgress?: (partial: { feedback: IdeaFeedback; structure: IdeaStructure }) => void;
+  }
 ): Promise<{ feedback: IdeaFeedback; structure: IdeaStructure }> {
-  const r = await chatJSON<IdeaFeedback & { structure: IdeaStructure }>({
+  const r = await chatStreamJSON<IdeaFeedback & { structure: IdeaStructure }>({
     messages: buildIdeaFeedbackMessages(p),
     schema: IDEA_FEEDBACK_SCHEMA,
     maxTokens: 900,
     signal: p.signal,
+    onPartial: p.onProgress ? (partial) => p.onProgress?.(normalizeCoachResult(partial)) : undefined,
   });
-  return {
-    feedback: { praise: r.praise, scaffoldingQuestions: r.scaffoldingQuestions, keyTips: r.keyTips },
-    structure: r.structure,
-  };
+  return normalizeCoachResult(r);
 }
 
 export function writeIdeaDraft(

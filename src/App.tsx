@@ -265,10 +265,6 @@ export const App: React.FC = () => {
           setParentTab('model');
           setParentOpen(true);
         }}
-        onOpenAbout={() => {
-          setParentTab('about');
-          setParentOpen(true);
-        }}
       >
         {keepAlive(
           'home',
