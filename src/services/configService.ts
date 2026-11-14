@@ -13,8 +13,16 @@ const CONFIG_VERSION = 3;
 
 export const DEFAULT_MAIN_MODEL = 'Qwen3.5-4B-Q5_K_M';
 
-/** 检测模型是否被当前环境支持（已升级至 llama.cpp build 12317，已原生支持 LFM3 架构） */
-export const isUnsupportedModelId = (_modelId?: string): boolean => false;
+/** 过滤非对话模型（如 llama.cpp 自带的 ggml-vocab-* 词表文件、测试模型及 SenseVoice 语音识别模型） */
+export const isUnsupportedModelId = (modelId?: string): boolean => {
+  const id = (modelId ?? '').trim().toLowerCase();
+  if (!id) return false;
+  return (
+    id.startsWith('ggml-vocab-') ||
+    id.startsWith('for-tests-') ||
+    id.startsWith('sensevoice')
+  );
+};
 
 const DEFAULT_CONFIG: AppConfig = {
   llmApiUrl: '/api/llm/v1',

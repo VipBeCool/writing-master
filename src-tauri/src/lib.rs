@@ -39,6 +39,41 @@ impl ServiceManager {
         .is_ok()
     }
 
+    /// 检测目录是否包含真实可用的 GGUF 模型权重（排除 llama.cpp 源码自带的 ggml-vocab-* 词表测试文件）
+    #[cfg(target_os = "windows")]
+    fn has_valid_gguf_models(dir: &std::path::Path) -> bool {
+        if !dir.is_dir() {
+            return false;
+        }
+        if dir.join("models-preset.ini").is_file() {
+            return true;
+        }
+        std::fs::read_dir(dir)
+            .map(|mut entries| {
+                entries.any(|e| {
+                    e.map(|entry| {
+                        let p = entry.path();
+                        let is_gguf = p
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .map(|ext| ext.eq_ignore_ascii_case("gguf"))
+                            .unwrap_or(false);
+                        if !is_gguf {
+                            return false;
+                        }
+                        let name = p
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        !name.starts_with("ggml-vocab-") && !name.starts_with("for-tests-")
+                    })
+                    .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    }
+
     /// 跨平台自动探测 llama-server 二进制、模型目录及预设配置文件
     pub fn detect_llama_paths() -> (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) {
         let mut binary: Option<PathBuf> = None;
@@ -124,7 +159,7 @@ impl ServiceManager {
                 }
             }
 
-            // 探测模型权重目录
+            // 探测模型权重目录（优先独立 models 目录，其次才是 llama.cpp\models，且排除仅含 ggml-vocab-* 的源码测试目录）
             if let Ok(custom_models) = std::env::var("MODELS_DIR") {
                 let cm = PathBuf::from(custom_models);
                 if cm.is_dir() {
@@ -132,18 +167,29 @@ impl ServiceManager {
                 }
             }
             if models_dir.is_none() {
-                for dir in &search_dirs {
-                    let candidates = [
-                        dir.join("models"),
-                        dir.clone(),
-                    ];
-                    for c in candidates {
-                        if c.is_dir() && (c.join("models-preset.ini").is_file() || std::fs::read_dir(&c).map(|mut r| r.any(|e| e.map(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("gguf")).unwrap_or(false))).unwrap_or(false)) {
-                            models_dir = Some(c);
-                            break;
-                        }
-                    }
-                    if models_dir.is_some() {
+                let mut model_candidates = Vec::new();
+                if let Ok(userprofile) = std::env::var("USERPROFILE") {
+                    model_candidates.push(PathBuf::from(userprofile).join("models"));
+                }
+                for drive in ["C", "D", "E"] {
+                    model_candidates.push(PathBuf::from(format!(r"{}:\models", drive)));
+                    model_candidates.push(PathBuf::from(format!(r"{}:\AI\models", drive)));
+                }
+                if let Ok(custom) = std::env::var("LLAMA_DIR") {
+                    model_candidates.push(PathBuf::from(custom).join("models"));
+                }
+                if let Ok(userprofile) = std::env::var("USERPROFILE") {
+                    model_candidates.push(PathBuf::from(userprofile).join(r"llama.cpp\models"));
+                }
+                for drive in ["C", "D", "E"] {
+                    model_candidates.push(PathBuf::from(format!(r"{}:\llama.cpp\models", drive)));
+                    model_candidates.push(PathBuf::from(format!(r"{}:\AI\llama.cpp\models", drive)));
+                    model_candidates.push(PathBuf::from(format!(r"{}:\tools\llama.cpp\models", drive)));
+                }
+
+                for c in model_candidates {
+                    if Self::has_valid_gguf_models(&c) {
+                        models_dir = Some(c);
                         break;
                     }
                 }
