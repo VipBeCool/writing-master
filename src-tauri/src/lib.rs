@@ -108,6 +108,7 @@ impl ServiceManager {
             for dir in &search_dirs {
                 let candidates = [
                     dir.join("llama-server.exe"),
+                    dir.join(r"build-vs2022\bin\Release\llama-server.exe"),
                     dir.join(r"build\bin\Release\llama-server.exe"),
                     dir.join(r"build\bin\llama-server.exe"),
                 ];

@@ -164,6 +164,11 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
     setEssay('');
     setVersions([]);
     setActiveVersionIdx(0);
+    setChat([{ role: 'assistant', text: GREETING }]);
+    setChatInput('');
+    setCollectMsg(null);
+    setCopied(false);
+    setSuggestions(getContextualFallbackSuggestions(title.trim(), genre, profile.stage));
     setParamsOpen(false);
     try {
       const res = await generateSampleEssay({
