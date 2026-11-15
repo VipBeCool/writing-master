@@ -228,6 +228,19 @@ const ModelTab: React.FC = () => {
     }
   };
 
+  const hasLoadingModel = useMemo(
+    () => models.some((m) => m.status === 'loading'),
+    [models]
+  );
+
+  useEffect(() => {
+    if (!hasLoadingModel) return;
+    const timer = window.setInterval(() => {
+      listAvailableModels(cfg.llmApiUrl).then(setModels).catch(() => {});
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [hasLoadingModel, cfg.llmApiUrl]);
+
   const sortedModels = useMemo(() => {
     const topicTarget = cfg.topicModel.trim();
     const rank = (m: RemoteModelInfo) => {
@@ -377,7 +390,7 @@ const ModelTab: React.FC = () => {
         </div>
 
         <p className="text-xs leading-relaxed text-ink-mute">
-          Router 默认最多同时常驻 2 个模型；切换对比多个大模型或准备释放显卡显存时，可在此直接单独「加载」或「卸载」。
+          启动应用时会自动预加载当前配置的「主力 / 出题」模型；Router 默认最多同时常驻 2 个模型，切换对比多个大模型或释放显卡显存时，可在此直接单独「加载」或「卸载」。
         </p>
 
         {actionFeedback && (

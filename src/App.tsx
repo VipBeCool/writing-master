@@ -12,7 +12,7 @@ import { GoldenNotebook } from './components/GoldenNotebook';
 import { ParentZone } from './components/ParentZone';
 import { UpdateDialog } from './components/UpdateDialog';
 import { INITIAL_GOLDEN_SNIPPETS } from './services/mockData';
-import { checkLLMStatus, countChars } from './services/aiService';
+import { checkLLMStatus, countChars, warmupConfiguredModels } from './services/aiService';
 import { checkForAppUpdates, type UpdateInfo } from './services/updateService';
 import { useGradeProfile } from './services/libraryStore';
 import { DEFAULT_GRADE, defaultGenre, GRADE_ORDER, type GradeLevel } from './data/gradeProfiles';
@@ -89,8 +89,9 @@ export const App: React.FC = () => {
   useEffect(() => localStorage.setItem(SNIPPETS_KEY, JSON.stringify(snippets)), [snippets]);
   useEffect(() => localStorage.setItem(ESSAYS_KEY, JSON.stringify(savedEssays)), [savedEssays]);
 
-  /* ── 本地模型在线状态：启动阶段高频探测（1.2s），成功后转为常规 10s；失败超 20 次才判定 offline ── */
+  /* ── 本地模型在线状态：启动阶段高频探测（1.2s）并自动预热已配置模型，完成后转为常规 10s ── */
   const [llmStatus, setLlmStatus] = useState<LlmStatus>('starting');
+  const startupWarmupStartedRef = useRef(false);
   useEffect(() => {
     if (parentOpen) return;
     let cancelled = false;
@@ -102,6 +103,20 @@ export const App: React.FC = () => {
       if (cancelled) return;
 
       if (ok) {
+        if (!startupWarmupStartedRef.current) {
+          startupWarmupStartedRef.current = true;
+          if (intervalId) {
+            clearInterval(intervalId);
+            intervalId = undefined;
+          }
+          setLlmStatus('starting');
+          try {
+            await warmupConfiguredModels();
+          } catch (e) {
+            console.warn('启动预加载模型失败:', e);
+          }
+          if (cancelled) return;
+        }
         setLlmStatus('online');
         // 成功在线后，降频为常规 10 秒心跳
         if (intervalId) clearInterval(intervalId);

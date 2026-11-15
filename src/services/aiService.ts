@@ -505,14 +505,7 @@ async function postRouterModelAction(
   return { ok: false, message };
 }
 
-/** 主动预加载指定模型到显存（llama-server Router 模式） */
-export async function loadRemoteModel(modelId: string, baseUrl?: string): Promise<void> {
-  const id = modelId.trim();
-  if (!id) return;
-  const result = await postRouterModelAction('load', id, baseUrl);
-  if (!result.ok && !/already running/i.test(result.message)) {
-    throw new Error(`加载模型 ${id} 失败：${result.message}`);
-  }
+async function waitForModelLoaded(id: string, baseUrl?: string): Promise<void> {
   await pollModelUntil(
     id,
     baseUrl,
@@ -525,6 +518,48 @@ export async function loadRemoteModel(modelId: string, baseUrl?: string): Promis
     90_000,
     500,
     `模型 ${id} 加载失败，请确认显存充足且模型格式受本地 llama-server 支持。`
+  );
+}
+
+/** 主动预加载指定模型到显存（llama-server Router 模式） */
+export async function loadRemoteModel(modelId: string, baseUrl?: string): Promise<void> {
+  const id = modelId.trim();
+  if (!id) return;
+  const result = await postRouterModelAction('load', id, baseUrl);
+  if (!result.ok && !/already running/i.test(result.message)) {
+    throw new Error(`加载模型 ${id} 失败：${result.message}`);
+  }
+  await waitForModelLoaded(id, baseUrl);
+}
+
+/** 启动预热：自动将家长配置的主力模型与出题模型预加载到显存（仅对支持动态加载的 Router 生效） */
+export async function warmupConfiguredModels(): Promise<void> {
+  const cfg = loadConfig();
+  const mainModel = cfg.llmModel.trim();
+  const mainUrl = cfg.llmApiUrl;
+  const topicModel = cfg.topicModel.trim();
+  const topicUrl = cfg.topicApiUrl.trim() || mainUrl;
+
+  const targets: { model: string; baseUrl: string }[] = [];
+  if (mainModel) {
+    targets.push({ model: mainModel, baseUrl: mainUrl });
+  }
+  if (topicModel && (topicModel !== mainModel || topicUrl !== mainUrl)) {
+    targets.push({ model: topicModel, baseUrl: topicUrl });
+  }
+
+  await Promise.allSettled(
+    targets.map(async ({ model, baseUrl }) => {
+      const models = await listAvailableModels(baseUrl);
+      if (models.length === 0) return;
+      const item = models.find((m) => m.id === model);
+      if (!item || item.status === 'unknown' || item.loaded) return;
+      if (item.status === 'loading') {
+        await waitForModelLoaded(model, baseUrl);
+        return;
+      }
+      await loadRemoteModel(model, baseUrl);
+    })
   );
 }
 
