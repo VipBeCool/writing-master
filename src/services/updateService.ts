@@ -3,7 +3,7 @@
  * 支持从 GitHub Releases 检查最新版本、获取更新日志，并在客户端内展示或一键更新
  */
 
-export const APP_VERSION = '1.0.3';
+export const APP_VERSION = '1.0.4';
 export const GITHUB_REPO = 'VipBeCool/writing-master';
 
 export interface UpdateInfo {
@@ -70,7 +70,7 @@ export async function performInAppUpdate(
 
   onProgress?.(1, '正在下载更新包…');
 
-  await update.downloadAndInstall((event) => {
+  await update.download((event) => {
     switch (event.event) {
       case 'Started':
         totalBytes = event.data.contentLength || 0;
@@ -80,20 +80,29 @@ export async function performInAppUpdate(
         downloadedBytes += event.data.chunkLength;
         if (totalBytes > 0) {
           const pct = Math.min(99, Math.round((downloadedBytes / totalBytes) * 100));
-          onProgress?.(pct, `正在下载并安装 ${pct}%…`);
+          onProgress?.(pct, `正在下载更新包 ${pct}%…`);
         } else {
           onProgress?.(50, '正在下载更新包…');
         }
         break;
       case 'Finished':
-        onProgress?.(100, '下载安装完成，正在准备重启…');
+        onProgress?.(100, '下载完成，正在清理后台模型并释放显存…');
         break;
     }
   });
 
-  onProgress?.(100, '更新完成！正在自动重启应用…');
-  // 稍作停顿让用户看到完成状态，随后立即重启进入新版本
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  // Windows NSIS 安装器在 update.install() 时会直接退出并替换应用，提前终止后台服务树释放显存
+  onProgress?.(100, '正在释放后台模型与显存…');
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('stop_managed_services');
+  } catch {
+    // 非关键错误不阻断后续更新安装
+  }
+
+  onProgress?.(100, '正在安装更新并准备重启…');
+  await update.install();
+  // macOS / Linux 下需要显式重启以切换到新版本（Windows 安装器会自动拉起新版本）
   await relaunch();
 }
 

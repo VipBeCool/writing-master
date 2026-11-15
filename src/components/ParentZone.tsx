@@ -9,6 +9,8 @@ import {
   Laptop,
   Loader2,
   Mic,
+  Play,
+  PowerOff,
   RefreshCw,
   RotateCcw,
   Save,
@@ -20,7 +22,14 @@ import { Dialog } from './Dialog';
 import { Mascot } from './Mascot';
 import { Badge, Banner, Button, Card, Field, INPUT_CLASS, Segmented, Tabs } from './ui';
 import { loadConfig, saveConfig, type AppConfig } from '../services/configService';
-import { checkLLMStatus, listAvailableModels, type RemoteModelInfo } from '../services/aiService';
+import {
+  checkLLMStatus,
+  listAvailableModels,
+  loadRemoteModel,
+  unloadAllRemoteModels,
+  unloadRemoteModel,
+  type RemoteModelInfo,
+} from '../services/aiService';
 import {
   APP_VERSION,
   checkForAppUpdates,
@@ -131,16 +140,108 @@ const ModelTab: React.FC = () => {
   const [test, setTest] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   const [saved, setSaved] = useState(false);
   const [models, setModels] = useState<RemoteModelInfo[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyModels, setBusyModels] = useState<Record<string, 'loading' | 'unloading'>>({});
+  const [unloadingAll, setUnloadingAll] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [llamaManaged, setLlamaManaged] = useState<boolean | null>(null);
 
   const refreshModels = async (url?: string) => {
-    const list = await listAvailableModels(url ?? cfg.llmApiUrl);
-    setModels(list);
-    return list;
+    setRefreshing(true);
+    try {
+      const list = await listAvailableModels(url ?? cfg.llmApiUrl);
+      setModels(list);
+      return list;
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   useEffect(() => {
-    refreshModels(cfg.llmApiUrl);
+    listAvailableModels(cfg.llmApiUrl).then(setModels).catch(() => {});
+    if (isTauriApp()) {
+      import('@tauri-apps/api/core')
+        .then(({ invoke }) => invoke<{ llama_running: boolean; llama_managed: boolean }>('get_service_status'))
+        .then((st) => {
+          if (st?.llama_running) setLlamaManaged(Boolean(st.llama_managed));
+        })
+        .catch(() => {});
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const runModelAction = async (
+    modelId: string,
+    mode: 'loading' | 'unloading',
+    action: () => Promise<void>,
+    successText: string,
+    fallbackErr: string
+  ) => {
+    setActionFeedback(null);
+    setBusyModels((prev) => ({ ...prev, [modelId]: mode }));
+    try {
+      await action();
+      setActionFeedback({ kind: 'ok', text: successText });
+    } catch (e) {
+      setActionFeedback({ kind: 'err', text: e instanceof Error ? e.message : fallbackErr });
+    } finally {
+      setBusyModels((prev) => {
+        const next = { ...prev };
+        delete next[modelId];
+        return next;
+      });
+      await refreshModels(cfg.llmApiUrl);
+    }
+  };
+
+  const handleLoadModel = (modelId: string) =>
+    runModelAction(
+      modelId,
+      'loading',
+      () => loadRemoteModel(modelId, cfg.llmApiUrl),
+      `已加载 ${modelId} 到显存`,
+      `加载 ${modelId} 失败`
+    );
+
+  const handleUnloadModel = (modelId: string) =>
+    runModelAction(
+      modelId,
+      'unloading',
+      () => unloadRemoteModel(modelId, cfg.llmApiUrl),
+      `已卸载 ${modelId}，显存已释放`,
+      `卸载 ${modelId} 失败`
+    );
+
+  const handleUnloadAll = async () => {
+    setActionFeedback(null);
+    setUnloadingAll(true);
+    try {
+      const count = await unloadAllRemoteModels(cfg.llmApiUrl);
+      setActionFeedback({
+        kind: 'ok',
+        text: count > 0 ? `已卸载全部 ${count} 个模型，显存已释放` : '当前没有已加载的模型',
+      });
+    } catch (e) {
+      setActionFeedback({ kind: 'err', text: e instanceof Error ? e.message : '全部卸载失败' });
+    } finally {
+      setUnloadingAll(false);
+      await refreshModels(cfg.llmApiUrl);
+    }
+  };
+
+  const sortedModels = useMemo(() => {
+    const topicTarget = cfg.topicModel.trim();
+    const rank = (m: RemoteModelInfo) => {
+      if (m.loaded || m.status === 'loading') return 0;
+      if (m.id === cfg.llmModel || (topicTarget && m.id === topicTarget)) return 1;
+      return 2;
+    };
+    return [...models].sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
+  }, [models, cfg.llmModel, cfg.topicModel]);
+
+  const loadedCount = useMemo(
+    () => models.filter((m) => m.loaded || m.status === 'loading').length,
+    [models]
+  );
 
   const set = (patch: Partial<AppConfig>, autoSave = false) => {
     setCfg((c) => {
@@ -235,6 +336,136 @@ const ModelTab: React.FC = () => {
         </Button>
         {test === 'ok' && <Badge accent="mint">连接成功，已同步 {models.length} 个模型</Badge>}
         {test === 'fail' && <Badge accent="coral">连不上，请确认 llama-server 已启动</Badge>}
+      </div>
+
+      {/* 本地显存与模型加载/卸载管理 */}
+      <div className="rounded-2xl border border-line bg-canvas/40 p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Cpu className="size-4 text-brand-700" aria-hidden="true" />
+            <span className="text-sm font-bold text-ink">模型加载与显存管理</span>
+            <Badge accent={loadedCount > 0 ? 'mint' : 'sky'}>
+              已加载 {loadedCount} 个
+            </Badge>
+            {llamaManaged !== null && (
+              <span className="text-xs text-ink-mute">
+                {llamaManaged ? '· 应用托管（退出自动释放显存）' : '· 外部服务（需手动卸载或关闭服务）'}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={RefreshCw}
+              loading={refreshing}
+              onClick={() => refreshModels(cfg.llmApiUrl)}
+            >
+              刷新
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              icon={PowerOff}
+              loading={unloadingAll}
+              disabled={loadedCount === 0 || refreshing}
+              onClick={handleUnloadAll}
+            >
+              {unloadingAll ? '卸载中…' : '全部卸载'}
+            </Button>
+          </div>
+        </div>
+
+        <p className="text-xs leading-relaxed text-ink-mute">
+          Router 默认最多同时常驻 2 个模型；切换对比多个大模型或准备释放显卡显存时，可在此直接单独「加载」或「卸载」。
+        </p>
+
+        {actionFeedback && (
+          <div
+            role="status"
+            className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold ${
+              actionFeedback.kind === 'ok'
+                ? 'bg-mint-50 text-mint-700 border border-mint-100'
+                : 'bg-coral-50 text-coral-700 border border-coral-100'
+            }`}
+          >
+            {actionFeedback.kind === 'ok' ? (
+              <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+            ) : (
+              <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+            )}
+            <span>{actionFeedback.text}</span>
+          </div>
+        )}
+
+        {sortedModels.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-line bg-white/70 px-4 py-3 text-xs text-ink-mute">
+            暂未检测到可管理的模型列表，请确认本地 `llama-server` 已运行后点击「刷新」。
+          </div>
+        ) : (
+          <div className="max-h-60 space-y-2 overflow-y-auto pr-1">
+            {sortedModels.map((m) => {
+              const busy = busyModels[m.id];
+              const isLoaded = m.loaded || m.status === 'loaded';
+              const isLoading = m.status === 'loading';
+              const isFailed = m.status === 'failed';
+              const isMain = m.id === cfg.llmModel;
+              const isTopic = cfg.topicModel.trim() === m.id;
+
+              return (
+                <div
+                  key={m.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white px-3 py-2"
+                >
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                    <span className="truncate font-mono text-xs font-bold text-ink sm:text-sm" title={m.id}>
+                      {m.id}
+                    </span>
+                    {isMain && <Badge accent="brand">主力</Badge>}
+                    {isTopic && <Badge accent="sun">出题</Badge>}
+                    {isLoaded ? (
+                      <Badge accent="mint">已加载</Badge>
+                    ) : isLoading ? (
+                      <Badge accent="sun">加载中…</Badge>
+                    ) : isFailed ? (
+                      <Badge accent="coral">加载失败</Badge>
+                    ) : (
+                      <span className="rounded-full bg-canvas px-2 py-0.5 text-xs font-medium text-ink-mute">
+                        未加载
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="shrink-0">
+                    {isLoaded || isLoading ? (
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        icon={PowerOff}
+                        loading={busy === 'unloading'}
+                        disabled={Boolean(busy) || unloadingAll}
+                        onClick={() => handleUnloadModel(m.id)}
+                      >
+                        {busy === 'unloading' ? '卸载中…' : '卸载'}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="soft"
+                        icon={Play}
+                        loading={busy === 'loading'}
+                        disabled={Boolean(busy) || unloadingAll}
+                        onClick={() => handleLoadModel(m.id)}
+                      >
+                        {busy === 'loading' ? '加载中…' : '加载'}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <details className="rounded-2xl border border-line p-4">

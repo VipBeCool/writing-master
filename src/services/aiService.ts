@@ -414,9 +414,30 @@ export async function chatJSON<T>(opts: {
   return parseFinalJSON<T>(content);
 }
 
+export type RemoteModelStatus = 'loaded' | 'loading' | 'unloaded' | 'sleeping' | 'failed' | 'unknown';
+
 export interface RemoteModelInfo {
   id: string;
   loaded: boolean;
+  status?: RemoteModelStatus;
+}
+
+/** 从 OpenAI 兼容接口地址推导出 llama-server 路由根地址（去除末尾 `/v1`） */
+function resolveRouterRootUrl(baseUrl?: string): string {
+  return normalizeApiUrl(baseUrl ?? loadConfig().llmApiUrl).replace(/\/v1\/?$/, '');
+}
+
+function normalizeRemoteStatus(raw: unknown): RemoteModelStatus {
+  switch (raw) {
+    case 'loaded':
+    case 'loading':
+    case 'unloaded':
+    case 'sleeping':
+    case 'failed':
+      return raw;
+    default:
+      return 'unknown';
+  }
 }
 
 /** 获取 llama-server 当前注册的模型列表（含加载状态） */
@@ -428,14 +449,109 @@ export async function listAvailableModels(baseUrl?: string): Promise<RemoteModel
     const data = await res.json();
     const list: any[] = Array.isArray(data?.data) ? data.data : [];
     return list
-      .map((m) => ({
-        id: String(m?.id ?? '').trim(),
-        loaded: m?.status?.value === 'loaded',
-      }))
+      .map((m) => {
+        const status = normalizeRemoteStatus(m?.status?.value);
+        return {
+          id: String(m?.id ?? '').trim(),
+          loaded: status === 'loaded',
+          status,
+        };
+      })
       .filter((m) => Boolean(m.id) && !isUnsupportedModelId(m.id));
   } catch {
     return [];
   }
+}
+
+async function pollModelUntil(
+  modelId: string,
+  baseUrl: string | undefined,
+  predicate: (item: RemoteModelInfo | undefined) => 'done' | 'wait' | 'error',
+  timeoutMs: number,
+  intervalMs: number,
+  errorMessage: string
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const list = await listAvailableModels(baseUrl);
+    const target = list.find((m) => m.id === modelId);
+    const verdict = predicate(target);
+    if (verdict === 'done') return;
+    if (verdict === 'error') throw new Error(errorMessage);
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+async function postRouterModelAction(
+  action: 'load' | 'unload',
+  modelId: string,
+  baseUrl?: string
+): Promise<{ ok: boolean; message: string }> {
+  const root = resolveRouterRootUrl(baseUrl);
+  const res = await fetch(`${root}/models/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: modelId }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (res.ok) return { ok: true, message: '' };
+  let message = `HTTP ${res.status}`;
+  try {
+    const data = await res.json();
+    message = data?.error?.message || data?.message || message;
+  } catch {
+    // ignore
+  }
+  return { ok: false, message };
+}
+
+/** 主动预加载指定模型到显存（llama-server Router 模式） */
+export async function loadRemoteModel(modelId: string, baseUrl?: string): Promise<void> {
+  const id = modelId.trim();
+  if (!id) return;
+  const result = await postRouterModelAction('load', id, baseUrl);
+  if (!result.ok && !/already running/i.test(result.message)) {
+    throw new Error(`加载模型 ${id} 失败：${result.message}`);
+  }
+  await pollModelUntil(
+    id,
+    baseUrl,
+    (m) => {
+      if (!m) return 'wait';
+      if (m.loaded || m.status === 'loaded') return 'done';
+      if (m.status === 'failed') return 'error';
+      return 'wait';
+    },
+    90_000,
+    500,
+    `模型 ${id} 加载失败，请确认显存充足且模型格式受本地 llama-server 支持。`
+  );
+}
+
+/** 主动从显存卸载指定模型（llama-server Router 模式） */
+export async function unloadRemoteModel(modelId: string, baseUrl?: string): Promise<void> {
+  const id = modelId.trim();
+  if (!id) return;
+  const result = await postRouterModelAction('unload', id, baseUrl);
+  if (!result.ok && !/not running/i.test(result.message)) {
+    throw new Error(`卸载模型 ${id} 失败：${result.message}`);
+  }
+  await pollModelUntil(
+    id,
+    baseUrl,
+    (m) => (!m || (!m.loaded && m.status !== 'loading') ? 'done' : 'wait'),
+    15_000,
+    300,
+    `模型 ${id} 卸载超时。`
+  );
+}
+
+/** 卸载当前已加载的所有模型，快速释放显存 */
+export async function unloadAllRemoteModels(baseUrl?: string): Promise<number> {
+  const list = await listAvailableModels(baseUrl);
+  const targets = list.filter((m) => m.loaded || m.status === 'loading');
+  await Promise.all(targets.map((m) => unloadRemoteModel(m.id, baseUrl)));
+  return targets.length;
 }
 
 /** 检查本地模型服务是否在线；可传入尚未保存的地址用于“测试连接” */

@@ -7,6 +7,117 @@ use std::time::Duration;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Windows 作业对象封装：启用 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，
+/// 确保主程序意外退出、崩溃或被更新安装器强杀时，内核自动清理所有子孙进程（如 llama-server 模型工作进程）。
+#[cfg(windows)]
+mod win_job {
+    use std::ffi::c_void;
+    use std::process::Child;
+    use std::os::windows::io::AsRawHandle;
+
+    type Handle = *mut c_void;
+    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: i32 = 9;
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct JobObjectBasicLimitInformation {
+        per_process_user_time_limit: i64,
+        per_job_user_time_limit: i64,
+        limit_flags: u32,
+        minimum_working_set_size: usize,
+        maximum_working_set_size: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct IoCounters {
+        read_operation_count: u64,
+        write_operation_count: u64,
+        other_operation_count: u64,
+        read_transfer_count: u64,
+        write_transfer_count: u64,
+        other_transfer_count: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct JobObjectExtendedLimitInformation {
+        basic_limit_information: JobObjectBasicLimitInformation,
+        io_info: IoCounters,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn CreateJobObjectW(lp_job_attributes: *const c_void, lp_name: *const u16) -> Handle;
+        fn SetInformationJobObject(
+            h_job: Handle,
+            job_object_information_class: i32,
+            lp_job_object_information: *const c_void,
+            cb_job_object_information_length: u32,
+        ) -> i32;
+        fn AssignProcessToJobObject(h_job: Handle, h_process: Handle) -> i32;
+        fn CloseHandle(h_object: Handle) -> i32;
+    }
+
+    pub struct WinJobObject {
+        handle: Handle,
+    }
+
+    // Win32 Job Object 句柄可跨线程安全传递与引用
+    unsafe impl Send for WinJobObject {}
+    unsafe impl Sync for WinJobObject {}
+
+    impl WinJobObject {
+        pub fn new() -> Option<Self> {
+            unsafe {
+                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if handle.is_null() {
+                    return None;
+                }
+                let mut info = JobObjectExtendedLimitInformation::default();
+                info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let ok = SetInformationJobObject(
+                    handle,
+                    JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+                    (&raw const info).cast(),
+                    std::mem::size_of::<JobObjectExtendedLimitInformation>() as u32,
+                );
+                if ok == 0 {
+                    CloseHandle(handle);
+                    return None;
+                }
+                Some(Self { handle })
+            }
+        }
+
+        pub fn assign(&self, child: &Child) -> bool {
+            unsafe { AssignProcessToJobObject(self.handle, child.as_raw_handle() as Handle) != 0 }
+        }
+    }
+
+    impl Drop for WinJobObject {
+        fn drop(&mut self) {
+            if !self.handle.is_null() {
+                unsafe {
+                    CloseHandle(self.handle);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Default, serde::Serialize)]
 pub struct ServiceStatusInfo {
     pub llama_running: bool,
@@ -19,6 +130,8 @@ pub struct ServiceManager {
     llama_child: Arc<Mutex<Option<Child>>>,
     asr_child: Arc<Mutex<Option<Child>>>,
     status: Arc<Mutex<ServiceStatusInfo>>,
+    #[cfg(windows)]
+    job_object: Option<win_job::WinJobObject>,
 }
 
 impl ServiceManager {
@@ -27,6 +140,8 @@ impl ServiceManager {
             llama_child: Arc::new(Mutex::new(None)),
             asr_child: Arc::new(Mutex::new(None)),
             status: Arc::new(Mutex::new(ServiceStatusInfo::default())),
+            #[cfg(windows)]
+            job_object: win_job::WinJobObject::new(),
         }
     }
 
@@ -381,13 +496,18 @@ impl ServiceManager {
         // Windows 避免弹出控制台窗口
         #[cfg(windows)]
         {
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
         match cmd.spawn() {
             Ok(child_proc) => {
                 println!("[Tauri] llama-server 启动成功，PID: {}", child_proc.id());
+                #[cfg(windows)]
+                if let Some(ref job) = self.job_object {
+                    if !job.assign(&child_proc) {
+                        eprintln!("[Tauri] 绑定 llama-server 到 JobObject 失败");
+                    }
+                }
                 let mut child_guard = self.llama_child.lock().unwrap();
                 *child_guard = Some(child_proc);
 
@@ -431,13 +551,18 @@ impl ServiceManager {
 
         #[cfg(windows)]
         {
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
         match cmd.spawn() {
             Ok(child_proc) => {
                 println!("[Tauri] ASR 语音服务启动成功，PID: {}", child_proc.id());
+                #[cfg(windows)]
+                if let Some(ref job) = self.job_object {
+                    if !job.assign(&child_proc) {
+                        eprintln!("[Tauri] 绑定 ASR 服务到 JobObject 失败");
+                    }
+                }
                 let mut child_guard = self.asr_child.lock().unwrap();
                 *child_guard = Some(child_proc);
 
@@ -451,17 +576,46 @@ impl ServiceManager {
         }
     }
 
-    /// App 退出时，释放所有管理的子进程与显存
-    pub fn stop_all(&self) {
-        if let Some(mut child) = self.llama_child.lock().unwrap().take() {
-            println!("[Tauri] 正在退出应用，终止 llama-server 释放 GPU 显存...");
+    /// 终止子进程及其派生的所有孙子进程（如 llama-server 路由模式拉起的模型工作进程）
+    fn terminate_child_tree(child: &mut Child, label: &str) {
+        let pid = child.id();
+        println!("[Tauri] 正在终止 {} 进程树 (PID: {})...", label, pid);
+
+        #[cfg(windows)]
+        {
+            // taskkill /T /F 同步杀死路由父进程及全部模型工作子进程，立即释放 GPU 显存
+            let _ = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
             let _ = child.kill();
             let _ = child.wait();
         }
-        if let Some(mut child) = self.asr_child.lock().unwrap().take() {
-            println!("[Tauri] 终止本地 ASR 语音服务...");
+
+        #[cfg(not(windows))]
+        {
+            let pid_str = pid.to_string();
+            // 先发 SIGTERM 让 llama-server 路由优雅卸载子进程，超时后再强制清理进程树
+            let _ = Command::new("kill").args(["-TERM", &pid_str]).output();
+            for _ in 0..15 {
+                if let Ok(Some(_)) = child.try_wait() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            let _ = Command::new("pkill").args(["-KILL", "-P", &pid_str]).output();
             let _ = child.kill();
             let _ = child.wait();
+        }
+    }
+
+    /// App 退出或更新重启前，释放所有托管的子进程树与 GPU 显存
+    pub fn stop_all(&self) {
+        if let Some(mut child) = self.llama_child.lock().unwrap().take() {
+            Self::terminate_child_tree(&mut child, "llama-server");
+        }
+        if let Some(mut child) = self.asr_child.lock().unwrap().take() {
+            Self::terminate_child_tree(&mut child, "ASR 语音服务");
         }
         let mut st = self.status.lock().unwrap();
         st.llama_running = false;
@@ -476,9 +630,20 @@ impl ServiceManager {
     }
 }
 
+impl Drop for ServiceManager {
+    fn drop(&mut self) {
+        self.stop_all();
+    }
+}
+
 #[tauri::command]
 fn get_service_status(manager: tauri::State<'_, Arc<ServiceManager>>) -> ServiceStatusInfo {
     manager.get_status()
+}
+
+#[tauri::command]
+fn stop_managed_services(manager: tauri::State<'_, Arc<ServiceManager>>) {
+    manager.stop_all();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -491,7 +656,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(service_manager)
-        .invoke_handler(tauri::generate_handler![get_service_status])
+        .invoke_handler(tauri::generate_handler![
+            get_service_status,
+            stop_managed_services
+        ])
         .setup(move |_app| {
             // App 启动时同时尝试拉起 llama 路由服务与 ASR 语音服务
             mgr_for_setup.start_llama();
@@ -508,4 +676,33 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn win_job_object_assigns_and_kills_child_tree_on_drop() {
+        let job = win_job::WinJobObject::new().expect("CreateJobObjectW / SetInformationJobObject should succeed");
+        let mut child = Command::new("cmd")
+            .args(["/C", "ping -n 30 127.0.0.1 >NUL"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .expect("spawn child");
+
+        assert!(job.assign(&child), "AssignProcessToJobObject should succeed");
+        drop(job);
+
+        // 等待内核在 Job 句柄关闭后终止子进程
+        let mut exited = false;
+        for _ in 0..30 {
+            if let Ok(Some(_)) = child.try_wait() {
+                exited = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(exited, "child process should be terminated when WinJobObject drops");
+    }
 }
