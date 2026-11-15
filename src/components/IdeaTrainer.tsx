@@ -13,7 +13,7 @@ import {
   Trash2,
   Unlock,
 } from 'lucide-react';
-import type { IdeaTrainingSession, SavedEssay, TopicHistoryItem } from '../types';
+import type { GoldenSnippetTag, IdeaTrainingSession, SavedEssay, TopicHistoryItem } from '../types';
 import { defaultGenre, resolveGenre, type GradeProfile } from '../data/gradeProfiles';
 import type { TopicCard } from '../data/topics';
 import { getGenreGuide } from '../services/libraryStore';
@@ -32,6 +32,7 @@ import {
 } from '../services/topicHistoryStore';
 import { AudioInputButton } from './AudioInputButton';
 import { Dialog } from './Dialog';
+import { SelectionCollectBar } from './SelectionCollectBar';
 import { inferGenreFromTitle, inferSnippetTag } from '../utils/text';
 import {
   Badge,
@@ -105,11 +106,20 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
   const [session, setSession] = useState<IdeaTrainingSession | null>(null);
   const [saved, setSaved] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
+  const draftPaperRef = useRef<HTMLDivElement>(null);
   const isBusy = stage !== 'idle';
 
-  // 首页点“就写这个”时，带入题目与破题提示，并自动记入历史
+  const resetWorkspace = (clearOutline: boolean) => {
+    setSession(null);
+    setSaved({});
+    setError(null);
+    if (clearOutline) setOutline('');
+  };
+
+  // 首页点“就写这个”时，带入题目与破题提示，清空上一题的结果与想法，并自动记入历史
   useEffect(() => {
     if (preset) {
+      resetWorkspace(true);
       setTopic(preset.topic);
       setGenre(preset.genre);
       setTopicTip(preset.tip || null);
@@ -137,6 +147,7 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
         locked: genreLocked,
         currentTopic: topic.trim(),
       });
+      resetWorkspace(true);
       setTopic(card.topic);
       if (!genreLocked) {
         setGenre(card.genre);
@@ -159,9 +170,12 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
   };
 
   const pickFromHistory = (item: TopicHistoryItem) => {
+    if (isBusy) return;
+    resetWorkspace(true);
     setTopic(item.topic);
-    setGenre(item.genre);
-    setTopicTip(item.tip);
+    setGenre(resolveGenre(profile, item.genre));
+    setTopicTip(item.tip || null);
+    setTopicModel(null);
     setHistoryOpen(false);
   };
 
@@ -191,9 +205,7 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
   const start = async () => {
     if (!topic.trim()) return setError('先给作文定个题目吧，或者点“换个盲盒题”。');
 
-    setError(null);
-    setSession(null);
-    setSaved({});
+    resetWorkspace(false);
     setStage('coaching');
     const ctx = { profile, genre };
     const sessionId = `idea-${Date.now()}`;
@@ -275,9 +287,9 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
     }
   };
 
-  const collect = (sentence: string) => {
-    const inferredTag = inferSnippetTag(sentence, session?.generatedDraft.content);
-    onAddGoldenSnippet(sentence, `《${session?.topic ?? topic}》`, inferredTag, `来自“想一想”的示范成文（${profile.name}）`);
+  const collect = (sentence: string, customTag?: GoldenSnippetTag) => {
+    const resolvedTag = customTag ?? inferSnippetTag(sentence, session?.generatedDraft.content);
+    onAddGoldenSnippet(sentence, `《${session?.topic ?? topic}》`, resolvedTag, `来自“想一想”的示范成文（${profile.name}）`);
     setSaved((p) => ({ ...p, [sentence]: true }));
   };
 
@@ -395,9 +407,18 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
                     const next = e.target.value;
                     setTopic(next);
                     setTopicTip(null);
+                    setTopicModel(null);
+                    if (!isBusy && session && next.trim() === '') {
+                      resetWorkspace(false);
+                    }
                     if (!genreLocked) {
                       const inferred = inferGenreFromTitle(next, profile.genres);
                       if (inferred) setGenre(inferred);
+                    }
+                  }}
+                  onBlur={() => {
+                    if (!isBusy && session && topic.trim() !== session.topic.trim()) {
+                      resetWorkspace(false);
                     }
                   }}
                   placeholder="例如：那一刻，我真后悔"
@@ -421,7 +442,20 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
           </section>
 
           <section className="space-y-3">
-            <StepHeading n={2} accent="sun" right={<AudioInputButton onTranscript={(t) => setOutline((p) => (p ? `${p}，${t}` : t))} />}>
+            <StepHeading
+              n={2}
+              accent="sun"
+              right={
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  {outline.trim() && !isBusy && (
+                    <Button variant="ghost" size="sm" icon={Trash2} onClick={() => setOutline('')} title="清空当前想法">
+                      清空
+                    </Button>
+                  )}
+                  <AudioInputButton onTranscript={(t) => setOutline((p) => (p ? `${p}，${t}` : t))} />
+                </div>
+              }
+            >
               说说你的想法
             </StepHeading>
             <Field
@@ -608,11 +642,25 @@ export const IdeaTrainer: React.FC<IdeaTrainerProps> = ({
                     ))}
                   </dl>
 
-                  <EssayPaper
-                    content={draft.content}
-                    streaming={stage === 'writing'}
-                    placeholder={stage === 'writing' ? <span className="text-ink-mute italic">小导师正在根据你的想法提笔…</span> : null}
-                  />
+                  <div ref={draftPaperRef}>
+                    <EssayPaper
+                      content={draft.content}
+                      streaming={stage === 'writing'}
+                      placeholder={stage === 'writing' ? <span className="text-ink-mute italic">小导师正在根据你的想法提笔…</span> : null}
+                    />
+                  </div>
+
+                  {session && draft.content.trim() && stage !== 'writing' && (
+                    <SelectionCollectBar
+                      key={session.id}
+                      accent="sun"
+                      containerRef={draftPaperRef}
+                      essayContent={draft.content}
+                      hint="用鼠标选中上面示范作文里喜欢的句子，点右边直接收藏到好词好句本"
+                      emptyHint="先用鼠标在上面示范作文里选中一句喜欢的话，再点“收藏选中好句”哦。"
+                      onCollect={(selected, resolvedTag) => collect(selected, resolvedTag)}
+                    />
+                  )}
 
                   {(draft.goldenSentences.length > 0 || stage === 'picking') && (
                     <section className="space-y-3">

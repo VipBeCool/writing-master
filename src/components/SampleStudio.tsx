@@ -15,7 +15,7 @@ import {
   SlidersHorizontal,
   Sparkles,
 } from 'lucide-react';
-import type { GoldenSnippet, SavedEssay } from '../types';
+import type { SavedEssay } from '../types';
 import { resolveGenre, type GradeProfile } from '../data/gradeProfiles';
 import {
   generateSampleEssay,
@@ -27,7 +27,8 @@ import {
 import { AudioInputButton } from './AudioInputButton';
 import { PhotoUploader } from './PhotoUploader';
 import { Mascot } from './Mascot';
-import { formatEssayForCopy, inferGenreFromTitle, inferSnippetTag, SNIPPET_TAGS } from '../utils/text';
+import { SelectionCollectBar } from './SelectionCollectBar';
+import { formatEssayForCopy, inferGenreFromTitle } from '../utils/text';
 import {
   Badge,
   Banner,
@@ -51,9 +52,6 @@ interface SampleStudioProps {
   onSaveEssay: (essay: Omit<SavedEssay, 'id' | 'wordCount' | 'createdAt'>) => void;
   isEssaySaved: (title: string, content: string) => boolean;
 }
-
-type SelectableSnippetTag = '自动识别' | GoldenSnippet['tag'];
-const TAG_OPTIONS: SelectableSnippetTag[] = ['自动识别', ...SNIPPET_TAGS];
 
 const GREETING = '你好，我是小语！看看左边这篇范文，哪里想改就告诉我，比如“把第二段写得更生动”。';
 
@@ -85,13 +83,13 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
   const [revising, setRevising] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [tag, setTag] = useState<SelectableSnippetTag>('自动识别');
+  const [collectKey, setCollectKey] = useState(0);
+  const essayPaperRef = useRef<HTMLDivElement>(null);
   const [chatInput, setChatInput] = useState('');
   const [chat, setChat] = useState<{ role: 'user' | 'assistant'; text: string }[]>([
     { role: 'assistant', text: GREETING },
   ]);
   const chatEnd = useRef<HTMLDivElement>(null);
-  const [collectMsg, setCollectMsg] = useState<string | null>(null);
 
   // 生成范文后自动收起参数面板，把空间留给“范文 + 小语对话”并排展示
   const [paramsOpen, setParamsOpen] = useState(true);
@@ -166,7 +164,7 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
     setActiveVersionIdx(0);
     setChat([{ role: 'assistant', text: GREETING }]);
     setChatInput('');
-    setCollectMsg(null);
+    setCollectKey((n) => n + 1);
     setCopied(false);
     setSuggestions(getContextualFallbackSuggestions(title.trim(), genre, profile.stage));
     setParamsOpen(false);
@@ -279,17 +277,6 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
     await navigator.clipboard.writeText(formatEssayForCopy(title, essay));
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
-  };
-
-  const collectSelection = () => {
-    const selected = window.getSelection()?.toString().trim() || '';
-    if (!selected) {
-      setCollectMsg('先用鼠标在范文里选中一句喜欢的话，再点“收藏好句”哦。');
-      return;
-    }
-    const finalTag = tag === '自动识别' ? inferSnippetTag(selected, essay) : tag;
-    setCollectMsg(null);
-    onAddGoldenSnippet(selected, `《${title}》`, finalTag, `我从范文里选的好句子（${profile.name}）`);
   };
 
   const isModifiedVersion = activeVersionIdx > 0;
@@ -680,50 +667,26 @@ export const SampleStudio: React.FC<SampleStudioProps> = ({
                 </div>
               )}
 
-              <EssayPaper
-                content={essay}
-                streaming={busy || revising}
-                placeholder={<span className="text-ink-mute italic">老师正在提笔构思…</span>}
-                className="min-h-56"
-              />
-
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-sky-50 p-4">
-                <p className="flex items-center gap-2 text-base font-semibold text-sky-700">
-                  <Sparkles className="size-5" aria-hidden="true" />
-                  用鼠标选中喜欢的句子，点右边收藏好句；也可以把整篇{essayKindLabel}存进本子
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <label htmlFor="collect-tag" className="sr-only">
-                    句子类型
-                  </label>
-                  <select
-                    id="collect-tag"
-                    value={tag}
-                    onChange={(e) => setTag(e.target.value as SelectableSnippetTag)}
-                    className="rounded-xl border-2 border-sky-100 bg-white px-3 py-1.5 text-base font-semibold text-ink"
-                  >
-                    {TAG_OPTIONS.map((t) => (
-                      <option key={t} value={t}>
-                        {t === '自动识别' ? '✨ 自动识别分类' : t}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()} // 点按钮时保留文字选区
-                    onClick={collectSelection}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-2 text-base font-bold text-white hover:bg-brand-700"
-                  >
-                    <BookmarkPlus className="size-4.5" aria-hidden="true" />
-                    收藏选中好句
-                  </button>
-                </div>
-                {collectMsg && (
-                  <p role="status" className="basis-full text-sm text-sky-700">
-                    {collectMsg}
-                  </p>
-                )}
+              <div ref={essayPaperRef}>
+                <EssayPaper
+                  content={essay}
+                  streaming={busy || revising}
+                  placeholder={<span className="text-ink-mute italic">老师正在提笔构思…</span>}
+                  className="min-h-56"
+                />
               </div>
+
+              <SelectionCollectBar
+                key={collectKey}
+                accent="sky"
+                containerRef={essayPaperRef}
+                essayContent={essay}
+                hint={`用鼠标选中喜欢的句子，点右边收藏好句；也可以把整篇${essayKindLabel}存进本子`}
+                emptyHint="先用鼠标在范文里选中一句喜欢的话，再点“收藏选中好句”哦。"
+                onCollect={(selected, finalTag) =>
+                  onAddGoldenSnippet(selected, `《${title}》`, finalTag, `我从范文里选的好句子（${profile.name}）`)
+                }
+              />
             </Card>
 
             {/* 右：并排常驻模式下的对话卡片（桌面端 sticky 固定在视口内，无需上下滚动） */}

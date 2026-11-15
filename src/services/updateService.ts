@@ -3,7 +3,7 @@
  * 支持从 GitHub Releases 检查最新版本、获取更新日志，并在客户端内展示或一键更新
  */
 
-export const APP_VERSION = '1.0.5';
+export const APP_VERSION = '1.0.6';
 export const GITHUB_REPO = 'VipBeCool/writing-master';
 
 export interface UpdateInfo {
